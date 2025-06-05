@@ -1,0 +1,11 @@
+{
+  "tasks": {},
+  "config": {
+    "check_interval": 1.0,
+    "max_concurrent_tasks": 5,
+    "task_timeout": 60.0,
+    "retry_failed_tasks": true,
+    "max_retries": 3,
+    "retry_delay": 60.0
+  }
+}

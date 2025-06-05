@@ -8,7 +8,6 @@ from PyQt5.QtGui import QIcon
 from ui.components.tabs.ocr_tab import OCRTab
 from ui.components.tabs.monitor_tab import MonitorTab
 from ui.components.tabs.task_tab import TaskTab
-from ui.components.tabs.actions_tab import ActionsTab
 from ui.components.tabs.logs_tab import LogsTab
 from ui.components.status_bar import StatusBar
 from ui.components.config_panel import ConfigPanel
@@ -54,14 +53,12 @@ class MainWindow(QMainWindow):
         self.ocr_tab = OCRTab()
         self.monitor_tab = MonitorTab()
         self.task_tab = TaskTab()
-        self.actions_tab = ActionsTab()
         self.logs_tab = LogsTab()
         
         # 添加标签页到标签页控件
         self.tabs.addTab(self.ocr_tab, "OCR设置")
         self.tabs.addTab(self.monitor_tab, "监控设置")
         self.tabs.addTab(self.task_tab, "任务管理")
-        self.tabs.addTab(self.actions_tab, "动作配置")
         self.tabs.addTab(self.logs_tab, "日志")
         
         # 将标签页控件添加到布局
@@ -104,10 +101,35 @@ class MainWindow(QMainWindow):
             self.ocr_controller = OCRController(self.ocr_tab)
             logger.info("OCR控制器初始化成功")
             
+            # 初始化监控引擎
+            from core.monitor_engine import MonitorEngine
+            self.monitor_engine = MonitorEngine()
+            logger.info("监控引擎初始化成功")
+            
             # 初始化监控控制器
             from ui.controllers.tabs.monitor_controller import MonitorController
             self.monitor_controller = MonitorController(self.monitor_tab)
             logger.info("监控控制器初始化成功")
+            
+            # 初始化任务调度器
+            from core.task_manager import TaskManager
+            from core.task_scheduler import TaskScheduler
+            
+            # 创建任务调度器
+            self.task_scheduler = TaskScheduler()
+            logger.info("任务调度器初始化成功")
+            
+            # 创建任务管理器，并传入监控引擎和任务调度器
+            self.task_manager = TaskManager(monitor_engine=self.monitor_engine, task_scheduler=self.task_scheduler)
+            logger.info("任务管理器初始化成功")
+            
+            # 设置监控引擎的任务调度器
+            self.monitor_engine.task_scheduler = self.task_scheduler
+            
+            # 初始化任务控制器
+            from ui.controllers.tabs.task_controller import TaskController
+            self.task_controller = TaskController(self.task_tab, self.task_manager, self.monitor_engine)
+            logger.info("任务控制器初始化成功")
             
             # 注册所有标签页到配置控制器
             self.register_tabs_to_config_controller()
@@ -127,7 +149,6 @@ class MainWindow(QMainWindow):
             self.config_controller.register_tab("OCR设置", self.ocr_tab)
             self.config_controller.register_tab("监控设置", self.monitor_tab)
             self.config_controller.register_tab("任务管理", self.task_tab)
-            self.config_controller.register_tab("动作配置", self.actions_tab)
             self.config_controller.register_tab("日志", self.logs_tab)
             logger.info("所有标签页已注册到配置控制器")
         except Exception as e:
@@ -182,6 +203,7 @@ class MainWindow(QMainWindow):
         
         new_task_action = QAction("新建任务", self)
         new_task_action.setShortcut("Ctrl+N")
+        new_task_action.triggered.connect(self.on_new_task)
         file_menu.addAction(new_task_action)
         
         open_action = QAction("打开配置", self)
@@ -247,3 +269,39 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.error(f"保存配置失败: {e}")
                 QMessageBox.warning(self, "保存失败", f"保存配置时发生错误: {e}")
+    
+    def on_new_task(self):
+        """创建新任务"""
+        try:
+            # 切换到任务管理标签页
+            task_tab_index = self.tabs.indexOf(self.task_tab)
+            self.tabs.setCurrentIndex(task_tab_index)
+            
+            # 调用任务控制器的新建任务方法
+            if hasattr(self, 'task_controller'):
+                self.task_controller.on_new_task()
+            else:
+                logger.warning("任务控制器未初始化，无法创建新任务")
+        except Exception as e:
+            logger.error(f"创建新任务失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    def closeEvent(self, event):
+        """窗口关闭事件"""
+        try:
+            # 关闭任务管理器
+            if hasattr(self, 'task_manager'):
+                self.task_manager.shutdown()
+                logger.info("任务管理器已关闭")
+                
+            # 关闭任务调度器
+            if hasattr(self, 'task_scheduler'):
+                self.task_scheduler.stop()
+                logger.info("任务调度器已关闭")
+                
+        except Exception as e:
+            logger.error(f"关闭窗口时发生错误: {e}")
+            
+        # 继续默认的关闭事件
+        super().closeEvent(event)

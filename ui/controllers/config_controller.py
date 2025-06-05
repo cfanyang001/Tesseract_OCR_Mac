@@ -1,4 +1,5 @@
 from PyQt5.QtCore import QObject, pyqtSlot, Qt
+from PyQt5.QtWidgets import QComboBox, QLineEdit
 from loguru import logger
 
 from config.config_manager import ConfigManager
@@ -310,29 +311,107 @@ class ConfigController(QObject):
         try:
             # 设置监控间隔
             if hasattr(tab_widget, 'interval_combo') and 'interval' in config:
-                index = tab_widget.interval_combo.findText(config['interval'])
+                interval = str(config['interval'])
+                index = tab_widget.interval_combo.findText(interval)
                 if index >= 0:
                     tab_widget.interval_combo.setCurrentIndex(index)
+                else:
+                    # 如果找不到精确匹配，选择最接近的值
+                    tab_widget.interval_combo.setCurrentText(interval)
             
             # 设置匹配模式
             if hasattr(tab_widget, 'match_mode_combo') and 'match_mode' in config:
-                index = tab_widget.match_mode_combo.findText(config['match_mode'])
+                match_mode = config['match_mode']
+                index = tab_widget.match_mode_combo.findText(match_mode)
                 if index >= 0:
                     tab_widget.match_mode_combo.setCurrentIndex(index)
             
-            # 设置自动重试
-            if hasattr(tab_widget, 'auto_retry_check') and 'auto_retry' in config:
-                tab_widget.auto_retry_check.setChecked(config['auto_retry'])
+            # 设置规则组合方式
+            if hasattr(tab_widget, 'rule_list_group'):
+                rule_list_group = tab_widget.rule_list_group
+                combination_combo = rule_list_group.findChild(QComboBox, "combination_combo")
+                if combination_combo and 'rule_combination' in config:
+                    rule_combination = config['rule_combination']
+                    combo_text = ""
+                    
+                    if rule_combination == "AND":
+                        combo_text = "全部满足 (AND)"
+                    elif rule_combination == "OR":
+                        combo_text = "任一满足 (OR)"
+                    elif rule_combination == "CUSTOM":
+                        combo_text = "自定义组合"
+                    
+                    if combo_text:
+                        index = combination_combo.findText(combo_text)
+                        if index >= 0:
+                            combination_combo.setCurrentIndex(index)
+                
+                # 设置自定义表达式
+                custom_expr_edit = rule_list_group.findChild(QLineEdit, "custom_expr_edit")
+                if custom_expr_edit and 'custom_expression' in config:
+                    custom_expr_edit.setText(config['custom_expression'])
+                    # 如果是自定义组合，则启用自定义表达式输入框
+                    if config.get('rule_combination') == "CUSTOM":
+                        custom_expr_edit.setEnabled(True)
             
-            # 设置重试间隔
-            if hasattr(tab_widget, 'retry_interval_combo') and 'retry_interval' in config:
-                index = tab_widget.retry_interval_combo.findText(config['retry_interval'])
-                if index >= 0:
-                    tab_widget.retry_interval_combo.setCurrentIndex(index)
+            # 设置触发条件、延迟和执行动作
+            if hasattr(tab_widget, 'action_group'):
+                action_group = tab_widget.action_group
+                
+                # 设置触发条件
+                trigger_combo = action_group.findChild(QComboBox, "trigger_combo")
+                if trigger_combo and 'trigger_condition' in config:
+                    index = trigger_combo.findText(config['trigger_condition'])
+                    if index >= 0:
+                        trigger_combo.setCurrentIndex(index)
+                
+                # 设置延迟
+                delay_spin = action_group.findChild(QComboBox, "delay_spin")
+                if delay_spin and 'trigger_delay' in config:
+                    delay_spin.setValue(int(config['trigger_delay']))
+                
+                # 设置执行动作
+                action_combo = action_group.findChild(QComboBox, "action_combo")
+                if action_combo and 'action_type' in config:
+                    index = action_combo.findText(config['action_type'])
+                    if index >= 0:
+                        action_combo.setCurrentIndex(index)
+            
+            # 加载规则列表
+            main_window = tab_widget.window()
+            if main_window and hasattr(main_window, 'monitor_engine') and 'rules' in config:
+                monitor_engine = main_window.monitor_engine
+                if monitor_engine and hasattr(monitor_engine, 'rule_matcher'):
+                    # 导入规则
+                    from core.rule_matcher import Rule
+                    
+                    # 清空现有规则
+                    monitor_engine.rule_matcher.rules = {}
+                    
+                    # 加载规则
+                    if 'rules' in config and isinstance(config['rules'], dict):
+                        for rule_id, rule_data in config['rules'].items():
+                            if isinstance(rule_data, dict):
+                                rule = Rule.from_dict(rule_data)
+                                monitor_engine.rule_matcher.add_rule(rule)
+                    
+                    # 设置规则组合方式
+                    if 'rule_combination' in config:
+                        monitor_engine.rule_matcher.set_rule_combination(config['rule_combination'])
+                    
+                    # 设置自定义表达式
+                    if 'custom_expression' in config:
+                        monitor_engine.rule_matcher.set_custom_expression(config['custom_expression'])
+                    
+                    # 更新规则表格
+                    if hasattr(tab_widget, 'controller'):
+                        tab_widget.controller.update_rule_table()
             
             logger.info(f"已应用监控配置: {config}")
         except Exception as e:
             logger.error(f"应用监控配置失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def apply_task_config(self, tab_widget, config):
         """应用任务配置到标签页
@@ -474,15 +553,67 @@ class ConfigController(QObject):
             if hasattr(tab_widget, 'match_mode_combo'):
                 config['match_mode'] = tab_widget.match_mode_combo.currentText()
             
-            # 获取自动重试
-            if hasattr(tab_widget, 'auto_retry_check'):
-                config['auto_retry'] = tab_widget.auto_retry_check.isChecked()
+            # 获取规则组合方式
+            if hasattr(tab_widget, 'rule_list_group'):
+                rule_list_group = tab_widget.rule_list_group
+                combination_combo = rule_list_group.findChild(QComboBox, "combination_combo")
+                if combination_combo:
+                    combo_text = combination_combo.currentText()
+                    rule_combination = ""
+                    
+                    if combo_text == "全部满足 (AND)":
+                        rule_combination = "AND"
+                    elif combo_text == "任一满足 (OR)":
+                        rule_combination = "OR"
+                    elif combo_text == "自定义组合":
+                        rule_combination = "CUSTOM"
+                    
+                    if rule_combination:
+                        config['rule_combination'] = rule_combination
+                
+                # 获取自定义表达式
+                custom_expr_edit = rule_list_group.findChild(QLineEdit, "custom_expr_edit")
+                if custom_expr_edit:
+                    config['custom_expression'] = custom_expr_edit.text()
             
-            # 获取重试间隔
-            if hasattr(tab_widget, 'retry_interval_combo'):
-                config['retry_interval'] = tab_widget.retry_interval_combo.currentText()
+            # 获取触发条件、延迟和执行动作
+            if hasattr(tab_widget, 'action_group'):
+                action_group = tab_widget.action_group
+                
+                # 获取触发条件
+                trigger_combo = action_group.findChild(QComboBox, "trigger_combo")
+                if trigger_combo:
+                    config['trigger_condition'] = trigger_combo.currentText()
+                
+                # 获取延迟
+                delay_spin = action_group.findChild(QComboBox, "delay_spin")
+                if delay_spin:
+                    config['trigger_delay'] = delay_spin.value()
+                
+                # 获取执行动作
+                action_combo = action_group.findChild(QComboBox, "action_combo")
+                if action_combo:
+                    config['action_type'] = action_combo.currentText()
+            
+            # 获取规则列表 - 从主窗口的监控引擎中获取
+            main_window = tab_widget.window()
+            if main_window and hasattr(main_window, 'monitor_engine'):
+                monitor_engine = main_window.monitor_engine
+                if monitor_engine and hasattr(monitor_engine, 'rule_matcher'):
+                    # 保存规则列表
+                    rules_data = {}
+                    for rule_id, rule in monitor_engine.rule_matcher.get_all_rules().items():
+                        rules_data[rule_id] = rule.to_dict()
+                    config['rules'] = rules_data
+                    
+                    # 保存规则组合方式
+                    config['rule_combination'] = monitor_engine.rule_matcher.rule_combination
+                    config['custom_expression'] = monitor_engine.rule_matcher.custom_expression
+            
         except Exception as e:
             logger.error(f"获取监控配置失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         return config
     

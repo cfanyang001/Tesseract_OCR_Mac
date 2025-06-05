@@ -463,7 +463,7 @@ class ActionExecutor(QObject):
             clicks = params.get('clicks', 1)
             interval = params.get('interval', 0.0)
             pyautogui.click(button=button, clicks=clicks, interval=interval)
-            return f"鼠标单击: 位置({x}, {y}), 按钮={button}, 次数={clicks}"
+            return f"鼠标单击: 位置({x}, {y}), 按钮={button}, 次数={clicks}, 间隔={interval}秒"
             
         elif mouse_type == Action.MOUSE_DOUBLE_CLICK:
             # 双击

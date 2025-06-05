@@ -240,6 +240,8 @@ class MonitorEngine(QObject):
         Returns:
             Optional[MonitorArea]: 监控区域对象，不存在时返回None
         """
+        if not area_id:
+            return None
         return self.areas.get(area_id)
     
     def get_all_areas(self) -> Dict[str, MonitorArea]:

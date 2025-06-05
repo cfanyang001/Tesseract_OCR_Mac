@@ -10,13 +10,6 @@ NC='\033[0m' # 无颜色
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# 检查虚拟环境是否存在
-if [ ! -d "venv" ]; then
-    echo -e "${RED}错误: 找不到虚拟环境目录 'venv'${NC}"
-    echo -e "${YELLOW}请先创建虚拟环境: python3.9 -m venv venv${NC}"
-    exit 1
-fi
-
 # 输出启动信息
 echo -e "${GREEN}正在启动 Tesseract OCR监控软件...${NC}"
 

@@ -1,0 +1,11 @@
+{
+  "config": {
+    "auto_start": false,
+    "auto_save": true,
+    "save_interval": 300,
+    "log_level": "INFO",
+    "max_log_files": 10,
+    "enable_notification": true
+  },
+  "areas": {}
+}

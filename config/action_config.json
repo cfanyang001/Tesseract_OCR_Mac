@@ -1,0 +1,27 @@
+{
+  "actions": {
+    "e8104575-891e-4f3f-88d8-a606bffad98b": {
+      "id": "e8104575-891e-4f3f-88d8-a606bffad98b",
+      "type": "mouse",
+      "params": {
+        "mouse_type": "click",
+        "x": 0,
+        "y": 0,
+        "clicks": 1,
+        "interval": 0.1,
+        "button": "left"
+      },
+      "name": "鼠标点击 - (0,0) 左键 1次",
+      "last_executed": null
+    }
+  },
+  "sequences": {},
+  "config": {
+    "default_delay": 0.5,
+    "mouse_speed": 1.0,
+    "safe_mode": true,
+    "screenshot_dir": "./screenshots",
+    "allow_commands": false,
+    "command_timeout": 10.0
+  }
+}

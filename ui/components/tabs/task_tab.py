@@ -41,6 +41,7 @@ class TaskTab(QWidget):
         
         # 任务表格
         self.task_table = QTableWidget(0, 5)
+        self.task_table.setObjectName("task_table")
         self.task_table.setHorizontalHeaderLabels(["任务名称", "状态", "区域", "规则", "上次触发"])
         self.task_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.task_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -58,6 +59,7 @@ class TaskTab(QWidget):
         name_layout = QHBoxLayout()
         name_layout.addWidget(QLabel("任务名称:"))
         name_edit = QLineEdit()
+        name_edit.setObjectName("name_edit")
         name_layout.addWidget(name_edit)
         layout.addLayout(name_layout)
         
@@ -65,6 +67,7 @@ class TaskTab(QWidget):
         status_layout = QHBoxLayout()
         status_layout.addWidget(QLabel("任务状态:"))
         status_combo = QComboBox()
+        status_combo.setObjectName("status_combo")
         status_combo.addItems(["运行中", "已暂停", "已停止", "已完成", "出错"])
         status_layout.addWidget(status_combo)
         layout.addLayout(status_layout)
@@ -73,6 +76,7 @@ class TaskTab(QWidget):
         area_layout = QHBoxLayout()
         area_layout.addWidget(QLabel("监控区域:"))
         area_combo = QComboBox()
+        area_combo.setObjectName("area_combo")
         area_combo.addItems(["区域1", "区域2", "区域3", "新建区域..."])
         area_layout.addWidget(area_combo)
         layout.addLayout(area_layout)
@@ -81,6 +85,7 @@ class TaskTab(QWidget):
         rule_layout = QHBoxLayout()
         rule_layout.addWidget(QLabel("监控规则:"))
         rule_combo = QComboBox()
+        rule_combo.setObjectName("rule_combo")
         rule_combo.addItems(["规则1", "规则2", "规则3", "新建规则..."])
         rule_layout.addWidget(rule_combo)
         layout.addLayout(rule_layout)
@@ -89,6 +94,7 @@ class TaskTab(QWidget):
         refresh_layout = QHBoxLayout()
         refresh_layout.addWidget(QLabel("刷新频率:"))
         refresh_spin = QSpinBox()
+        refresh_spin.setObjectName("refresh_spin")
         refresh_spin.setRange(100, 10000)
         refresh_spin.setSingleStep(100)
         refresh_spin.setValue(1000)
@@ -98,12 +104,14 @@ class TaskTab(QWidget):
         
         # 自动重启
         restart_check = QCheckBox("出错时自动重启")
+        restart_check.setObjectName("restart_check")
         layout.addWidget(restart_check)
         
         # 任务进度
         progress_layout = QHBoxLayout()
         progress_layout.addWidget(QLabel("任务进度:"))
         progress_bar = QProgressBar()
+        progress_bar.setObjectName("progress_bar")
         progress_bar.setValue(0)
         progress_layout.addWidget(progress_bar)
         layout.addLayout(progress_layout)
@@ -118,26 +126,31 @@ class TaskTab(QWidget):
         
         # 新建任务按钮
         new_task_btn = QPushButton("新建任务")
+        new_task_btn.setObjectName("new_task_btn")
         new_task_btn.setMinimumHeight(40)
         layout.addWidget(new_task_btn)
         
         # 开始任务按钮
         start_task_btn = QPushButton("开始任务")
+        start_task_btn.setObjectName("start_task_btn")
         start_task_btn.setMinimumHeight(40)
         layout.addWidget(start_task_btn)
         
         # 暂停任务按钮
         pause_task_btn = QPushButton("暂停任务")
+        pause_task_btn.setObjectName("pause_task_btn")
         pause_task_btn.setMinimumHeight(40)
         layout.addWidget(pause_task_btn)
         
         # 停止任务按钮
         stop_task_btn = QPushButton("停止任务")
+        stop_task_btn.setObjectName("stop_task_btn")
         stop_task_btn.setMinimumHeight(40)
         layout.addWidget(stop_task_btn)
         
         # 删除任务按钮
         delete_task_btn = QPushButton("删除任务")
+        delete_task_btn.setObjectName("delete_task_btn")
         delete_task_btn.setMinimumHeight(40)
         layout.addWidget(delete_task_btn)
         
