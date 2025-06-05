@@ -190,32 +190,59 @@ class ConfigPanel(QWidget):
     
     def show_ocr_config(self):
         """显示OCR配置选项"""
-        group = QGroupBox("OCR引擎设置")
-        form = QFormLayout()
-        
         # 获取当前配置
         config = self.configs.get(self.current_config, {}).get("ocr", {})
         
-        # 语言选择
-        lang_combo = QComboBox()
-        lang_combo.addItems(["eng", "chi_sim", "chi_tra", "jpn", "kor"])
-        lang_combo.setCurrentText(config.get("language", "eng"))
-        form.addRow("语言:", lang_combo)
+        # 图像预处理选项
+        group = QGroupBox("图像预处理选项")
+        form = QFormLayout()
         
-        # PSM模式
-        psm_combo = QComboBox()
-        psm_combo.addItems(["3", "6", "7", "8", "13"])
-        psm_combo.setCurrentText(str(config.get("psm", "3")))
-        form.addRow("PSM模式:", psm_combo)
+        # 预处理开关
+        preprocess_combo = QComboBox()
+        preprocess_combo.addItems(["启用", "禁用"])
+        preprocess_value = config.get("preprocess", True)
+        preprocess_combo.setCurrentText("启用" if preprocess_value else "禁用")
+        form.addRow("启用预处理:", preprocess_combo)
         
-        # 引擎模式
-        oem_combo = QComboBox()
-        oem_combo.addItems(["1", "3"])
-        oem_combo.setCurrentText(str(config.get("oem", "3")))
-        form.addRow("引擎模式:", oem_combo)
+        # 自动修正
+        autocorrect_combo = QComboBox()
+        autocorrect_combo.addItems(["启用", "禁用"])
+        autocorrect_value = config.get("autocorrect", False)
+        autocorrect_combo.setCurrentText("启用" if autocorrect_value else "禁用")
+        form.addRow("文本自动修正:", autocorrect_combo)
+        
+        # 精度设置
+        accuracy_values = ["低", "中", "高", "极高"]
+        accuracy_combo = QComboBox()
+        accuracy_combo.addItems(accuracy_values)
+        accuracy = config.get("accuracy", 80)
+        if accuracy < 70:
+            accuracy_index = 0  # 低
+        elif accuracy < 80:
+            accuracy_index = 1  # 中
+        elif accuracy < 90:
+            accuracy_index = 2  # 高
+        else:
+            accuracy_index = 3  # 极高
+        accuracy_combo.setCurrentIndex(accuracy_index)
+        form.addRow("识别精度:", accuracy_combo)
         
         group.setLayout(form)
         self.config_content_layout.addWidget(group)
+        
+        # 缓存设置
+        cache_group = QGroupBox("缓存设置")
+        cache_form = QFormLayout()
+        
+        # 缓存大小
+        cache_combo = QComboBox()
+        cache_combo.addItems(["5", "10", "20", "50"])
+        cache_size = str(config.get("result_cache_size", 10))
+        cache_combo.setCurrentText(cache_size if cache_size in ["5", "10", "20", "50"] else "10")
+        cache_form.addRow("结果缓存大小:", cache_combo)
+        
+        cache_group.setLayout(cache_form)
+        self.config_content_layout.addWidget(cache_group)
     
     def show_monitor_config(self):
         """显示监控配置选项"""
@@ -270,9 +297,13 @@ class ConfigPanel(QWidget):
         if self.current_tab == "OCR设置":
             return {
                 "ocr": {
-                    "language": "eng",
+                    "language": "eng",  # 这些参数将从OCR标签页获取，而不是在配置面板中设置
                     "psm": "3",
-                    "oem": "3"
+                    "oem": "3",
+                    "preprocess": True,
+                    "autocorrect": False,
+                    "accuracy": 80,
+                    "result_cache_size": 10
                 }
             }
         elif self.current_tab == "监控设置":
