@@ -174,22 +174,55 @@ class TextRecognizer(QObject):
         Args:
             rect: 区域矩形
         """
+        error_count = 0
+        max_errors = 5  # 允许的最大连续错误次数
+        
         try:
             while not self._stop_event.is_set():
-                # 识别文本
-                text, details = self.recognize_area(rect)
-                
-                # 发送信号
-                if text:
-                    self.text_recognized.emit(text, details)
-                
-                # 等待下一次识别
-                self._stop_event.wait(self.config['refresh_rate'] / 1000)
+                try:
+                    # 识别文本
+                    text, details = self.recognize_area(rect)
+                    
+                    # 发送信号
+                    if text:
+                        self.text_recognized.emit(text, details)
+                    
+                    # 重置错误计数
+                    error_count = 0
+                    
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"连续识别过程中发生错误 ({error_count}/{max_errors}): {e}")
+                    
+                    # 如果连续错误太多，发出警告但继续运行
+                    if error_count >= max_errors:
+                        error_msg = f"连续识别过程中发生多次错误: {e}"
+                        logger.warning(error_msg)
+                        self.error_occurred.emit(error_msg)
+                        error_count = 0  # 重置错误计数，给系统恢复的机会
+                        
+                        # 暂停稍长时间让系统恢复
+                        time.sleep(2.0)
+                    
+                finally:
+                    # 无论成功或失败，等待下一次识别
+                    self._stop_event.wait(self.config['refresh_rate'] / 1000)
         
         except Exception as e:
             logger.error(f"连续识别线程异常: {e}")
             self.error_occurred.emit(str(e))
-            self._running = False
+            # 不要立即设置_running为False，以便可以尝试恢复
+            
+            # 尝试恢复线程运行
+            time.sleep(1.0)
+            if not self._stop_event.is_set():
+                logger.info("尝试恢复连续识别线程...")
+                try:
+                    # 递归调用，重新启动识别循环
+                    self._continuous_recognition_thread(rect)
+                except Exception as restart_error:
+                    logger.error(f"恢复连续识别线程失败: {restart_error}")
+                    self._running = False
     
     def _update_cache(self, text: str, details: Dict[str, Any]) -> None:
         """更新结果缓存

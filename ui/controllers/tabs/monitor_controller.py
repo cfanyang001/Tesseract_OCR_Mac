@@ -153,29 +153,71 @@ class MonitorController(QObject):
             ocr_controller = main_window.ocr_controller
             
             if not self.is_monitoring:
-                # 开始监控
-                success = ocr_controller.start_monitoring()
-                if success:
-                    self.is_monitoring = True
-                    self.monitor_button.setText("停止监控")
-                    self.monitor_button.setStyleSheet("background-color: #F44336; color: white; border-radius: 4px;")
-                    self.status_label.setText("监控状态: 正在监控")
-                    logger.info("监控已启动")
-                else:
+                try:
+                    # 开始监控
+                    success = ocr_controller.start_monitoring()
+                    if success:
+                        self.is_monitoring = True
+                        self.monitor_button.setText("停止监控")
+                        self.monitor_button.setStyleSheet("background-color: #F44336; color: white; border-radius: 4px;")
+                        self.status_label.setText("监控状态: 正在监控")
+                        logger.info("监控已启动")
+                        
+                        # 创建心跳检查定时器，每5秒检查一次监控状态
+                        if not hasattr(self, 'heartbeat_timer'):
+                            self.heartbeat_timer = QTimer()
+                            self.heartbeat_timer.timeout.connect(self.check_monitoring_status)
+                        
+                        self.heartbeat_timer.start(5000)  # 5秒检查一次
+                    else:
+                        QMessageBox.warning(
+                            self.monitor_tab, 
+                            "警告", 
+                            "无法启动监控，请先在OCR设置中选择一个区域"
+                        )
+                except Exception as start_error:
+                    logger.error(f"启动监控失败: {start_error}")
+                    import traceback
+                    logger.error(traceback.format_exc())
                     QMessageBox.warning(
                         self.monitor_tab, 
-                        "警告", 
-                        "无法启动监控，请先在OCR设置中选择一个区域"
+                        "错误", 
+                        f"启动监控失败: {start_error}\n请检查是否有屏幕录制权限。"
                     )
             else:
                 # 停止监控
-                success = ocr_controller.stop_monitoring()
-                if success:
+                try:
+                    success = ocr_controller.stop_monitoring()
+                    if success:
+                        self.is_monitoring = False
+                        self.monitor_button.setText("开始监控")
+                        self.monitor_button.setStyleSheet("background-color: #4CAF50; color: white; border-radius: 4px;")
+                        self.status_label.setText("监控状态: 已停止")
+                        logger.info("监控已停止")
+                        
+                        # 停止心跳检查
+                        if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer.isActive():
+                            self.heartbeat_timer.stop()
+                except Exception as stop_error:
+                    logger.error(f"停止监控失败: {stop_error}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    
+                    # 强制更新UI状态，确保用户可以重新开始
                     self.is_monitoring = False
                     self.monitor_button.setText("开始监控")
                     self.monitor_button.setStyleSheet("background-color: #4CAF50; color: white; border-radius: 4px;")
-                    self.status_label.setText("监控状态: 已停止")
-                    logger.info("监控已停止")
+                    self.status_label.setText("监控状态: 已停止(强制)")
+                    
+                    # 停止心跳检查
+                    if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer.isActive():
+                        self.heartbeat_timer.stop()
+                    
+                    QMessageBox.warning(
+                        self.monitor_tab, 
+                        "警告", 
+                        f"停止监控出现异常，已强制停止: {stop_error}"
+                    )
         
         except Exception as e:
             logger.error(f"切换监控状态失败: {e}")
@@ -186,6 +228,66 @@ class MonitorController(QObject):
                 "错误", 
                 f"切换监控状态失败: {e}"
             )
+    
+    def check_monitoring_status(self):
+        """检查监控状态，确保监控不会意外停止"""
+        try:
+            if not self.is_monitoring:
+                # 如果不是监控状态，停止心跳检查
+                if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer.isActive():
+                    self.heartbeat_timer.stop()
+                return
+            
+            # 获取主窗口
+            main_window = self.monitor_tab.window()
+            if not main_window or not hasattr(main_window, 'ocr_controller'):
+                return
+            
+            ocr_controller = main_window.ocr_controller
+            
+            # 检查OCR控制器的监控状态
+            if not ocr_controller.is_monitoring:
+                logger.warning("检测到监控已意外停止，尝试重新启动")
+                
+                # 尝试重新启动监控
+                try:
+                    success = ocr_controller.start_monitoring()
+                    if success:
+                        logger.info("监控已自动重新启动")
+                    else:
+                        logger.warning("自动重新启动监控失败")
+                        # 更新UI状态
+                        self.is_monitoring = False
+                        self.monitor_button.setText("开始监控")
+                        self.monitor_button.setStyleSheet("background-color: #4CAF50; color: white; border-radius: 4px;")
+                        self.status_label.setText("监控状态: 已停止(自动)")
+                        
+                        # 停止心跳检查
+                        if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer.isActive():
+                            self.heartbeat_timer.stop()
+                        
+                        # 通知用户
+                        QMessageBox.warning(
+                            self.monitor_tab, 
+                            "警告", 
+                            "监控已意外停止，自动重启失败。\n请手动重新启动监控。"
+                        )
+                except Exception as restart_error:
+                    logger.error(f"自动重启监控失败: {restart_error}")
+                    # 更新UI状态
+                    self.is_monitoring = False
+                    self.monitor_button.setText("开始监控")
+                    self.monitor_button.setStyleSheet("background-color: #4CAF50; color: white; border-radius: 4px;")
+                    self.status_label.setText("监控状态: 已停止(错误)")
+                    
+                    # 停止心跳检查
+                    if hasattr(self, 'heartbeat_timer') and self.heartbeat_timer.isActive():
+                        self.heartbeat_timer.stop()
+        
+        except Exception as e:
+            logger.error(f"检查监控状态失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     @pyqtSlot()
     def on_add_rule(self):

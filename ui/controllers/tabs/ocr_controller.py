@@ -350,44 +350,53 @@ class OCRController(QObject):
             
             # 转换为QPixmap
             if image is not None:
-                # 创建临时文件保存预览图像
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
-                    temp_filename = temp_file.name
-                
-                # 保存图像
-                import cv2
-                cv2.imwrite(temp_filename, image)
-                
-                # 保存当前截图路径
-                self.current_screenshot = temp_filename
-                
-                # 加载QPixmap
-                pixmap = QPixmap(temp_filename)
-                
-                # 设置预览图像
-                self.ocr_tab.preview.set_image(pixmap)
-                
-                logger.debug(f"已更新预览，图像大小: {pixmap.width()}x{pixmap.height()}")
-                
-                # 获取当前选择的区域信息
-                x, y, width, height = (
-                    self.current_rect.x(),
-                    self.current_rect.y(),
-                    self.current_rect.width(),
-                    self.current_rect.height()
-                )
-                
-                # 更新状态栏
-                main_window = self.ocr_tab.window()
-                if main_window and hasattr(main_window, 'status_bar'):
-                    main_window.status_bar.update_screen_area(
-                        f"{x},{y} {width}x{height}"
+                try:
+                    # 创建临时文件保存预览图像
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
+                        temp_filename = temp_file.name
+                    
+                    # 保存图像
+                    import cv2
+                    cv2.imwrite(temp_filename, image)
+                    
+                    # 保存当前截图路径
+                    self.current_screenshot = temp_filename
+                    
+                    # 加载QPixmap
+                    pixmap = QPixmap(temp_filename)
+                    
+                    # 设置预览图像
+                    self.ocr_tab.preview.set_image(pixmap)
+                    
+                    logger.debug(f"已更新预览，图像大小: {pixmap.width()}x{pixmap.height()}")
+                    
+                    # 获取当前选择的区域信息
+                    x, y, width, height = (
+                        self.current_rect.x(),
+                        self.current_rect.y(),
+                        self.current_rect.width(),
+                        self.current_rect.height()
                     )
+                    
+                    # 更新状态栏
+                    main_window = self.ocr_tab.window()
+                    if main_window and hasattr(main_window, 'status_bar'):
+                        main_window.status_bar.update_screen_area(
+                            f"{x},{y} {width}x{height}"
+                        )
+                except Exception as inner_e:
+                    logger.error(f"处理预览图像失败: {inner_e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    # 即使处理失败也不中断监控流程
+            else:
+                logger.warning("截图获取失败，可能是区域无效或截图权限问题")
                 
         except Exception as e:
             logger.error(f"更新预览失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            # 即使发生异常也不中断监控流程
     
     @pyqtSlot()
     def test_ocr(self):

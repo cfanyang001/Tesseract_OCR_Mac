@@ -642,6 +642,9 @@ class MonitorEngine(QObject):
         
         logger.info(f"区域监控线程已启动: {area.name}")
         
+        error_count = 0
+        max_errors = 5  # 允许的最大连续错误次数
+        
         while not self._stop_event.is_set():
             try:
                 # 获取配置
@@ -654,31 +657,54 @@ class MonitorEngine(QObject):
                 }
                 self.text_recognizer.set_config({'ocr': ocr_config})
                 
-                # 识别文本
-                text, details = self.text_recognizer.recognize_area(area.rect)
-                
-                # 更新状态
-                area.last_text = text
-                area.last_capture_time = datetime.now()
-                
-                # 发送信号
-                self.text_recognized.emit(area_id, text, details)
-                
-                # 检查规则匹配
-                self._check_rules(area, text)
-                
-                # 保存图像
-                if area.config.get('save_images', False):
-                    self._save_area_image(area)
+                try:
+                    # 识别文本
+                    text, details = self.text_recognizer.recognize_area(area.rect)
+                    
+                    # 更新状态
+                    area.last_text = text
+                    area.last_capture_time = datetime.now()
+                    
+                    # 发送信号
+                    self.text_recognized.emit(area_id, text, details)
+                    
+                    # 检查规则匹配
+                    self._check_rules(area, text)
+                    
+                    # 保存图像
+                    if area.config.get('save_images', False):
+                        self._save_area_image(area)
+                    
+                    # 重置错误计数
+                    error_count = 0
+                    
+                except Exception as inner_e:
+                    error_count += 1
+                    error_msg = f"文本识别异常 ({error_count}/{max_errors}): {area.name}, {inner_e}"
+                    logger.error(error_msg)
+                    
+                    # 只有在连续错误达到阈值时才发送错误信号，减少干扰
+                    if error_count >= max_errors:
+                        self.error_occurred.emit(error_msg)
+                        logger.warning(f"区域监控发生多次错误，尝试恢复: {area.name}")
+                        # 不重置错误计数，让它继续累积
                 
                 # 等待下一次刷新
                 self._stop_event.wait(refresh_rate / 1000)
                 
             except Exception as e:
-                error_msg = f"区域监控异常: {area.name}, {e}"
+                error_count += 1
+                error_msg = f"区域监控异常 ({error_count}/{max_errors}): {area.name}, {e}"
                 logger.error(error_msg)
-                self.error_occurred.emit(error_msg)
-                time.sleep(1.0)  # 发生错误时短暂暂停
+                
+                # 只有在连续错误达到阈值时才发送错误信号，减少干扰
+                if error_count >= max_errors:
+                    self.error_occurred.emit(error_msg)
+                    error_count = 0  # 重置计数器，给系统恢复的机会
+                    logger.warning(f"区域监控发生多次错误，尝试恢复: {area.name}")
+                    time.sleep(2.0)  # 多次错误时延长暂停时间让系统恢复
+                else:
+                    time.sleep(1.0)  # 发生错误时短暂暂停
         
         logger.info(f"区域监控线程已退出: {area.name}")
     
