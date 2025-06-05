@@ -12,8 +12,15 @@ class MonitorTab(QWidget):
     def __init__(self):
         super().__init__()
         
+        # 控制器引用，将由MonitorController设置
+        self.controller = None
+        
         # 创建主布局
         self.layout = QVBoxLayout(self)
+        
+        # 创建监控状态区域
+        self.status_group = self.create_status_group()
+        self.layout.addWidget(self.status_group)
         
         # 创建规则设置区域
         self.rule_group = self.create_rule_group()
@@ -26,6 +33,15 @@ class MonitorTab(QWidget):
         # 创建动作设置区域
         self.action_group = self.create_action_group()
         self.layout.addWidget(self.action_group)
+    
+    def create_status_group(self):
+        """创建监控状态组"""
+        group = QGroupBox("监控状态")
+        layout = QHBoxLayout(group)
+        
+        # 监控控制按钮和状态标签将由MonitorController添加
+        
+        return group
     
     def create_rule_group(self):
         """创建规则设置组"""

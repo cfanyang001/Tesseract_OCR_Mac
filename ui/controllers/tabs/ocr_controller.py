@@ -22,6 +22,9 @@ class OCRController(QObject):
         
         self.ocr_tab = ocr_tab
         
+        # 将控制器实例保存到标签页中，以便配置控制器能够访问它
+        self.ocr_tab.controller = self
+        
         # 创建OCR处理器、屏幕捕获器和文本识别器
         try:
             self.ocr_processor = OCRProcessor()
@@ -54,6 +57,9 @@ class OCRController(QObject):
         
         # 当前预览截图的路径
         self.current_screenshot = None
+        
+        # 监控状态标志
+        self.is_monitoring = False
         
         # 自动刷新定时器
         self.refresh_timer = QTimer()
@@ -142,57 +148,139 @@ class OCRController(QObject):
     
     def init_ui(self):
         """初始化UI"""
-        # 设置语言选项
-        lang_combo = self.ocr_tab.left_panel.findChild(
-            QObject, "lang_combo"
-        )
-        if lang_combo:
-            lang_combo.clear()
-            lang_combo.addItems(self.ocr_processor.get_available_languages())
+        try:
+            # 获取主窗口和配置控制器
+            main_window = self.ocr_tab.window()
+            if main_window and hasattr(main_window, 'config_controller'):
+                config_controller = main_window.config_controller
+                current_config = config_controller.config_manager.current_config
+                config = config_controller.config_manager.get_config(current_config)
+                ocr_config = config.get('ocr', {})
+                logger.info(f"正在加载OCR配置: {ocr_config}")
+                
+                # 使用配置更新OCR处理器
+                if ocr_config:
+                    self.ocr_processor.set_config(ocr_config)
+                    logger.info("已更新OCR处理器配置")
+            else:
+                logger.warning("无法获取配置控制器，使用默认设置")
+                ocr_config = {}
             
-            # 设置默认语言
-            default_lang = self.ocr_processor.config['language']
-            default_lang_text = self.ocr_processor.LANGUAGE_MAPPING.get(
-                default_lang, '中文简体'
-            )
-            index = lang_combo.findText(default_lang_text)
-            if index >= 0:
-                lang_combo.setCurrentIndex(index)
-        
-        # 设置PSM模式
-        psm_combo = self.ocr_tab.left_panel.findChild(
-            QObject, "psm_combo"
-        )
-        if psm_combo:
-            psm_combo.setCurrentIndex(self.ocr_processor.config['psm'])
-        
-        # 设置OEM引擎模式
-        oem_combo = self.ocr_tab.left_panel.findChild(
-            QObject, "oem_combo"
-        )
-        if oem_combo:
-            oem_combo.setCurrentIndex(self.ocr_processor.config['oem'])
-        
-        # 设置精度
-        accuracy_slider = self.ocr_tab.left_panel.findChild(
-            QObject, "accuracy_slider"
-        )
-        if accuracy_slider:
-            accuracy_slider.setValue(self.ocr_processor.config['accuracy'])
-        
-        # 设置预处理选项
-        preprocess_check = self.ocr_tab.left_panel.findChild(
-            QObject, "preprocess_check"
-        )
-        if preprocess_check:
-            preprocess_check.setChecked(self.ocr_processor.config['preprocess'])
-        
-        # 设置自动修正选项
-        autocorrect_check = self.ocr_tab.left_panel.findChild(
-            QObject, "autocorrect_check"
-        )
-        if autocorrect_check:
-            autocorrect_check.setChecked(self.ocr_processor.config['autocorrect'])
+            # 设置语言选项
+            lang_combo = self.ocr_tab.left_panel.findChild(QObject, "lang_combo")
+            if lang_combo:
+                # 阻止信号触发
+                lang_combo.blockSignals(True)
+                
+                lang_combo.clear()
+                lang_combo.addItems(self.ocr_processor.get_available_languages())
+                
+                # 设置默认语言
+                default_lang = self.ocr_processor.config['language']
+                default_lang_text = self.ocr_processor.LANGUAGE_MAPPING.get(
+                    default_lang, '中文简体'
+                )
+                index = lang_combo.findText(default_lang_text)
+                if index >= 0:
+                    lang_combo.setCurrentIndex(index)
+                    logger.debug(f"设置语言为: {default_lang_text}")
+                
+                # 恢复信号
+                lang_combo.blockSignals(False)
+            
+            # 设置PSM模式
+            psm_combo = self.ocr_tab.left_panel.findChild(QObject, "psm_combo")
+            if psm_combo:
+                # 阻止信号触发
+                psm_combo.blockSignals(True)
+                
+                psm_value = int(self.ocr_processor.config['psm'])
+                if 0 <= psm_value < psm_combo.count():
+                    psm_combo.setCurrentIndex(psm_value)
+                    logger.debug(f"设置PSM模式为: {psm_value}")
+                
+                # 恢复信号
+                psm_combo.blockSignals(False)
+            
+            # 设置OEM引擎模式
+            oem_combo = self.ocr_tab.left_panel.findChild(QObject, "oem_combo")
+            if oem_combo:
+                # 阻止信号触发
+                oem_combo.blockSignals(True)
+                
+                oem_value = int(self.ocr_processor.config['oem'])
+                if 0 <= oem_value < oem_combo.count():
+                    oem_combo.setCurrentIndex(oem_value)
+                    logger.debug(f"设置OEM引擎为: {oem_value}")
+                
+                # 恢复信号
+                oem_combo.blockSignals(False)
+            
+            # 设置精度滑块
+            accuracy_slider = self.ocr_tab.left_panel.findChild(QObject, "accuracy_slider")
+            if accuracy_slider:
+                # 阻止信号触发
+                accuracy_slider.blockSignals(True)
+                
+                accuracy_value = self.ocr_processor.config.get('accuracy', 80)
+                accuracy_slider.setValue(accuracy_value)
+                logger.debug(f"设置精度为: {accuracy_value}")
+                
+                # 同时更新精度显示值
+                accuracy_value_label = self.ocr_tab.left_panel.findChild(QObject, "accuracy_value")
+                if accuracy_value_label:
+                    accuracy_value_label.setText(f"{accuracy_value}%")
+                
+                # 恢复信号
+                accuracy_slider.blockSignals(False)
+            
+            # 设置预处理选项
+            preprocess_check = self.ocr_tab.left_panel.findChild(QObject, "preprocess_check")
+            if preprocess_check:
+                # 阻止信号触发
+                preprocess_check.blockSignals(True)
+                
+                preprocess_value = self.ocr_processor.config.get('preprocess', True)
+                preprocess_check.setChecked(preprocess_value)
+                logger.debug(f"设置预处理为: {preprocess_value}")
+                
+                # 恢复信号
+                preprocess_check.blockSignals(False)
+            
+            # 设置自动修正选项
+            autocorrect_check = self.ocr_tab.left_panel.findChild(QObject, "autocorrect_check")
+            if autocorrect_check:
+                # 阻止信号触发
+                autocorrect_check.blockSignals(True)
+                
+                autocorrect_value = self.ocr_processor.config.get('autocorrect', False)
+                autocorrect_check.setChecked(autocorrect_value)
+                logger.debug(f"设置自动修正为: {autocorrect_value}")
+                
+                # 恢复信号
+                autocorrect_check.blockSignals(False)
+            
+            # 设置刷新频率
+            refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
+            if refresh_combo and 'refresh_rate_text' in ocr_config:
+                # 阻止信号触发
+                refresh_combo.blockSignals(True)
+                
+                refresh_rate_text = ocr_config.get('refresh_rate_text', "低 (1秒)")
+                refresh_combo.setCurrentText(refresh_rate_text)
+                logger.debug(f"设置刷新频率为: {refresh_rate_text}")
+                
+                # 恢复信号
+                refresh_combo.blockSignals(False)
+            
+            # 尝试从配置加载保存的区域
+            self.load_area_from_config()
+            
+            logger.info("OCR UI初始化完成")
+        except Exception as e:
+            logger.error(f"初始化OCR UI失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     @pyqtSlot()
     def select_area(self):
@@ -202,7 +290,7 @@ class OCRController(QObject):
             QMessageBox.information(
                 self.ocr_tab,
                 "区域选择",
-                "请使用系统截图工具选择要监控的区域。\n\n操作方法：\n1. 在屏幕上拖拽选择一个区域\n2. 松开鼠标完成选择"
+                "请使用系统截图工具选择要监控的区域。\n\n操作方法：\n1. 在屏幕上拖拽选择一个区域\n2. 松开鼠标完成选择\n\n系统会自动记录所选区域的坐标。"
             )
             
             # 使用Mac原生截图工具
@@ -223,23 +311,14 @@ class OCRController(QObject):
                     pass
             self.current_screenshot = temp_filename
             
-            # 直接使用系统截图工具返回的区域，默认从(0,0)开始
-            # 如果需要调整位置，用户可以通过坐标输入框调整
-            width = pixmap.width()
-            height = pixmap.height()
-            
-            # 使用之前的位置（如果有）
-            x = 0
-            y = 0
-            if self.current_rect:
-                x = self.current_rect.x()
-                y = self.current_rect.y()
-            
-            # 创建新区域
-            self.current_rect = QRect(x, y, width, height)
+            # 使用MacScreenCaptureSelector返回的完整区域信息
+            self.current_rect = rect
             
             # 更新UI
             self.update_area_spinners()
+            
+            # 保存区域到配置
+            self.save_area_to_config()
             
             logger.info(f"区域已选择: {self.current_rect}")
             
@@ -249,25 +328,34 @@ class OCRController(QObject):
             logger.error(traceback.format_exc())
             QMessageBox.warning(
                 self.ocr_tab,
-                "选择失败",
-                f"区域选择过程出错: {e}"
+                "错误",
+                f"区域选择失败: {e}"
             )
     
     @pyqtSlot()
     def update_preview(self):
-        """更新预览"""
+        """更新预览区域"""
         if not self.current_rect:
+            logger.warning("没有选择区域，无法更新预览")
             return
         
         try:
-            # 使用Mac原生截图工具捕获当前区域
+            # 获取当前区域坐标
+            x = self.current_rect.x()
+            y = self.current_rect.y()
+            width = self.current_rect.width()
+            height = self.current_rect.height()
+            
+            logger.info(f"尝试捕获屏幕区域: x={x}, y={y}, width={width}, height={height}")
+            
+            # 使用MacScreenCaptureSelector捕获区域
             pixmap, temp_filename = MacScreenCaptureSelector.capture_rect(self.current_rect)
             
-            if not pixmap:
+            if not pixmap or pixmap.isNull():
                 logger.error("区域截图失败")
                 return
             
-            # 更新预览
+            # 设置截图预览
             self.ocr_tab.preview.set_image(pixmap)
             
             # 更新当前截图路径
@@ -278,7 +366,7 @@ class OCRController(QObject):
                     pass
             self.current_screenshot = temp_filename
             
-            logger.debug(f"预览已更新: {pixmap.width()}x{pixmap.height()}")
+            logger.info(f"预览已更新: {pixmap.width()}x{pixmap.height()}")
             
         except Exception as e:
             logger.error(f"更新预览失败: {e}")
@@ -458,45 +546,62 @@ OEM引擎: {oem_index}
             self.ocr_tab.result_label.setText(f"OCR识别失败: {e}")
     
     def update_area_spinners(self):
-        """根据当前区域更新坐标输入框"""
+        """更新区域坐标输入框"""
         if not self.current_rect:
             return
         
         # 更新坐标输入框
-        for name, value in [
-            ("x_spin", self.current_rect.x()),
-            ("y_spin", self.current_rect.y()),
-            ("width_spin", self.current_rect.width()),
-            ("height_spin", self.current_rect.height())
-        ]:
-            spin = self.ocr_tab.left_panel.findChild(QObject, name)
-            if spin:
-                spin.blockSignals(True)  # 阻止信号触发循环
-                spin.setValue(value)
-                spin.blockSignals(False)
-    
-    @pyqtSlot()
-    def update_area_from_spinners(self):
-        """根据坐标输入框更新当前区域"""
-        # 获取坐标值
         x_spin = self.ocr_tab.left_panel.findChild(QObject, "x_spin")
         y_spin = self.ocr_tab.left_panel.findChild(QObject, "y_spin")
         width_spin = self.ocr_tab.left_panel.findChild(QObject, "width_spin")
         height_spin = self.ocr_tab.left_panel.findChild(QObject, "height_spin")
         
-        if not all([x_spin, y_spin, width_spin, height_spin]):
-            return
+        if x_spin:
+            x_spin.blockSignals(True)  # 阻止信号触发循环
+            x_spin.setValue(self.current_rect.x())
+            x_spin.blockSignals(False)
+        if y_spin:
+            y_spin.blockSignals(True)
+            y_spin.setValue(self.current_rect.y())
+            y_spin.blockSignals(False)
+        if width_spin:
+            width_spin.blockSignals(True)
+            width_spin.setValue(self.current_rect.width())
+            width_spin.blockSignals(False)
+        if height_spin:
+            height_spin.blockSignals(True)
+            height_spin.setValue(self.current_rect.height())
+            height_spin.blockSignals(False)
         
-        # 创建新的区域
-        x = x_spin.value()
-        y = y_spin.value()
-        width = width_spin.value()
-        height = height_spin.value()
+        # 保存区域到配置
+        self.save_area_to_config()
+    
+    @pyqtSlot()
+    def update_area_from_spinners(self):
+        """从坐标输入框更新区域"""
+        # 获取坐标输入框
+        x_spin = self.ocr_tab.left_panel.findChild(QObject, "x_spin")
+        y_spin = self.ocr_tab.left_panel.findChild(QObject, "y_spin")
+        width_spin = self.ocr_tab.left_panel.findChild(QObject, "width_spin")
+        height_spin = self.ocr_tab.left_panel.findChild(QObject, "height_spin")
         
-        self.current_rect = QRect(x, y, width, height)
-        
-        # 更新预览
-        self.update_preview()
+        # 创建新区域
+        if x_spin and y_spin and width_spin and height_spin:
+            x = x_spin.value()
+            y = y_spin.value()
+            width = width_spin.value()
+            height = height_spin.value()
+            
+            if width > 0 and height > 0:
+                self.current_rect = QRect(x, y, width, height)
+                logger.info(f"区域已从坐标输入框更新: {self.current_rect}")
+                
+                # 更新预览
+                self.update_preview()
+                
+                # 保存区域到配置
+                self.save_area_to_config()
+                logger.info(f"已保存更新后的区域到配置: {self.current_rect}")
     
     @pyqtSlot(str)
     def update_language(self, language):
@@ -551,17 +656,103 @@ OEM引擎: {oem_index}
         elif rate_text == "高 (0.2秒)":
             rate = 200
         else:  # 自定义
-            rate = 1000
+            # 检查是否是用户交互导致的更新（而不是加载配置时）
+            if getattr(self, '_user_interaction', True):
+                # 弹出对话框让用户输入自定义时间
+                custom_rate, ok = QInputDialog.getInt(
+                    self.ocr_tab, 
+                    "自定义刷新频率", 
+                    "请输入刷新间隔(毫秒):", 
+                    1000, 100, 10000, 100
+                )
+                if ok:
+                    rate = custom_rate
+                    # 更新下拉框显示自定义值
+                    refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
+                    if refresh_combo:
+                        # 检查是否已存在自定义选项
+                        custom_text = f"自定义 ({rate}毫秒)"
+                        index = refresh_combo.findText(custom_text)
+                        
+                        # 如果没有找到匹配项，检查是否有其他自定义选项
+                        if index < 0:
+                            for i in range(refresh_combo.count()):
+                                if refresh_combo.itemText(i).startswith("自定义 ("):
+                                    index = i
+                                    break
+                        
+                        # 如果找到了自定义选项，更新它；否则添加新选项
+                        refresh_combo.blockSignals(True)
+                        if index >= 0:
+                            refresh_combo.setItemText(index, custom_text)
+                        else:
+                            refresh_combo.addItem(custom_text)
+                            index = refresh_combo.count() - 1
+                        
+                        refresh_combo.setCurrentIndex(index)
+                        refresh_combo.blockSignals(False)
+                        
+                        # 更新rate_text用于日志和保存
+                        rate_text = custom_text
+                else:
+                    # 如果用户取消，恢复到默认值
+                    rate = 1000
+                    # 恢复下拉框选择
+                    refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
+                    if refresh_combo:
+                        refresh_combo.blockSignals(True)
+                        refresh_combo.setCurrentText("低 (1秒)")
+                        refresh_combo.blockSignals(False)
+                        rate_text = "低 (1秒)"
+            else:
+                # 如果是加载配置导致的更新，使用配置中的值
+                rate = self.text_recognizer.config.get('refresh_rate', 1000)
         
         # 更新文本识别器配置
         self.text_recognizer.set_config({'refresh_rate': rate})
         
-        # 更新定时器
-        if self.refresh_timer.isActive():
+        # 如果正在监控，更新定时器
+        if self.is_monitoring and self.refresh_timer.isActive():
             self.refresh_timer.stop()
             self.refresh_timer.start(rate)
         
+        # 保存刷新频率到配置
+        self.save_refresh_rate_to_config(rate_text, rate)
+        
         logger.info(f"刷新频率已更新: {rate_text} ({rate}毫秒)")
+    
+    def save_refresh_rate_to_config(self, rate_text, rate_value):
+        """保存刷新频率到配置"""
+        try:
+            # 获取主窗口
+            main_window = self.ocr_tab.window()
+            if not main_window or not hasattr(main_window, 'config_controller'):
+                logger.warning("无法获取配置控制器，无法保存刷新频率")
+                return
+            
+            # 获取配置控制器
+            config_controller = main_window.config_controller
+            
+            # 获取当前配置
+            current_config = config_controller.config_manager.current_config
+            config = config_controller.config_manager.get_config(current_config)
+            
+            # 确保OCR配置部分存在
+            if 'ocr' not in config:
+                config['ocr'] = {}
+            
+            # 保存刷新频率设置
+            config['ocr']['refresh_rate_text'] = rate_text
+            config['ocr']['refresh_rate_value'] = rate_value
+            
+            # 保存配置
+            config_controller.config_manager.save_config(current_config, config)
+            logger.debug(f"已保存刷新频率: {rate_text} ({rate_value}毫秒)")
+            
+        except Exception as e:
+            logger.error(f"保存刷新频率失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     @pyqtSlot(str, dict)
     def on_text_recognized(self, text, details):
@@ -602,3 +793,339 @@ OEM引擎: {oem_index}
         # 更新OCR配置
         self.ocr_processor.set_config({'oem': index})
         logger.info(f"OCR OEM引擎模式已更新: {index}")
+
+    def save_area_to_config(self):
+        """保存当前区域和OCR设置到配置"""
+        try:
+            # 获取主窗口
+            main_window = self.ocr_tab.window()
+            if not main_window or not hasattr(main_window, 'config_controller'):
+                logger.warning("无法获取配置控制器，无法保存配置")
+                return
+            
+            # 获取配置控制器
+            config_controller = main_window.config_controller
+            
+            # 获取当前配置
+            current_config = config_controller.config_manager.current_config
+            config = config_controller.config_manager.get_config(current_config)
+            
+            # 确保OCR配置部分存在
+            if 'ocr' not in config:
+                config['ocr'] = {}
+            
+            # 获取当前OCR设置
+            ocr_config = {}
+            
+            # 获取语言设置
+            lang_combo = self.ocr_tab.left_panel.findChild(QObject, "lang_combo")
+            if lang_combo:
+                selected_lang = lang_combo.currentText()
+                lang_code = self.ocr_processor.LANGUAGE_MAPPING_REVERSE.get(selected_lang, 'chi_sim')
+                ocr_config['language'] = lang_code
+                logger.debug(f"保存语言设置: {selected_lang} -> {lang_code}")
+            
+            # 获取PSM模式
+            psm_combo = self.ocr_tab.left_panel.findChild(QObject, "psm_combo")
+            if psm_combo:
+                ocr_config['psm'] = str(psm_combo.currentIndex())
+                logger.debug(f"保存PSM模式: {psm_combo.currentIndex()} ({psm_combo.currentText()})")
+            
+            # 获取OEM引擎模式
+            oem_combo = self.ocr_tab.left_panel.findChild(QObject, "oem_combo")
+            if oem_combo:
+                ocr_config['oem'] = str(oem_combo.currentIndex())
+                logger.debug(f"保存OEM引擎: {oem_combo.currentIndex()} ({oem_combo.currentText()})")
+            
+            # 获取精度设置
+            accuracy_slider = self.ocr_tab.left_panel.findChild(QObject, "accuracy_slider")
+            if accuracy_slider:
+                ocr_config['accuracy'] = accuracy_slider.value()
+                logger.debug(f"保存精度设置: {accuracy_slider.value()}%")
+            
+            # 获取预处理选项
+            preprocess_check = self.ocr_tab.left_panel.findChild(QObject, "preprocess_check")
+            if preprocess_check:
+                ocr_config['preprocess'] = preprocess_check.isChecked()
+                logger.debug(f"保存预处理选项: {preprocess_check.isChecked()}")
+            
+            # 获取自动修正选项
+            autocorrect_check = self.ocr_tab.left_panel.findChild(QObject, "autocorrect_check")
+            if autocorrect_check:
+                ocr_config['autocorrect'] = autocorrect_check.isChecked()
+                logger.debug(f"保存自动修正选项: {autocorrect_check.isChecked()}")
+            
+            # 获取刷新频率设置
+            refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
+            if refresh_combo:
+                refresh_rate_text = refresh_combo.currentText()
+                
+                # 获取对应的毫秒值
+                if refresh_rate_text == "低 (1秒)":
+                    refresh_rate_value = 1000
+                elif refresh_rate_text == "中 (0.5秒)":
+                    refresh_rate_value = 500
+                elif refresh_rate_text == "高 (0.2秒)":
+                    refresh_rate_value = 200
+                elif refresh_rate_text.startswith("自定义 (") and refresh_rate_text.endswith("毫秒)"):
+                    # 从文本中提取毫秒值
+                    try:
+                        value_str = refresh_rate_text.replace("自定义 (", "").replace("毫秒)", "")
+                        refresh_rate_value = int(value_str)
+                    except ValueError:
+                        # 如果提取失败，使用定时器的值或默认值
+                        refresh_rate_value = self.refresh_timer.interval() if self.refresh_timer.isActive() else 1000
+                else:  # 其他自定义，使用定时器的值
+                    refresh_rate_value = self.refresh_timer.interval() if self.refresh_timer.isActive() else 1000
+                
+                ocr_config['refresh_rate_text'] = refresh_rate_text
+                ocr_config['refresh_rate_value'] = refresh_rate_value
+                logger.debug(f"保存刷新频率: {refresh_rate_text} ({refresh_rate_value}毫秒)")
+            
+            # 保存结果缓存大小
+            ocr_config['result_cache_size'] = self.ocr_processor.config.get('result_cache_size', 10)
+            
+            # 保存屏幕区域
+            if self.current_rect:
+                ocr_config['screen_area'] = {
+                    'x': self.current_rect.x(),
+                    'y': self.current_rect.y(),
+                    'width': self.current_rect.width(),
+                    'height': self.current_rect.height(),
+                    'is_selected': True
+                }
+                logger.debug(f"保存屏幕区域: {self.current_rect}")
+            
+            # 更新OCR配置
+            config['ocr'] = ocr_config
+            
+            # 保存配置
+            config_controller.config_manager.save_config(current_config, config)
+            logger.info(f"已保存OCR配置: {ocr_config}")
+            
+            # 更新OCR处理器配置，但不更新UI
+            self.ocr_processor.set_config(ocr_config)
+            
+        except Exception as e:
+            logger.error(f"保存配置失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    def load_area_from_config(self):
+        """从配置加载保存的区域和OCR设置"""
+        try:
+            # 获取主窗口
+            main_window = self.ocr_tab.window()
+            if not main_window:
+                logger.warning("无法获取主窗口")
+                return
+            if not hasattr(main_window, 'config_controller'):
+                logger.warning("主窗口没有config_controller属性")
+                return
+            
+            # 获取配置控制器
+            config_controller = main_window.config_controller
+            
+            # 获取当前配置
+            current_config = config_controller.config_manager.current_config
+            logger.info(f"当前配置: {current_config}")
+            
+            config = config_controller.config_manager.get_config(current_config)
+            logger.debug(f"配置内容: {config}")
+            
+            # 获取OCR配置
+            if 'ocr' in config:
+                ocr_config = config['ocr']
+                logger.debug(f"OCR配置: {ocr_config}")
+                
+                # 加载语言设置
+                if 'language' in ocr_config:
+                    language_code = ocr_config['language']
+                    language_text = self.ocr_processor.LANGUAGE_MAPPING.get(language_code, '中文简体')
+                    
+                    lang_combo = self.ocr_tab.left_panel.findChild(QObject, "lang_combo")
+                    if lang_combo:
+                        index = lang_combo.findText(language_text)
+                        if index >= 0:
+                            lang_combo.setCurrentIndex(index)
+                            logger.debug(f"设置语言为: {language_text}")
+                
+                # 加载PSM模式
+                if 'psm' in ocr_config:
+                    psm_combo = self.ocr_tab.left_panel.findChild(QObject, "psm_combo")
+                    if psm_combo:
+                        psm_value = int(ocr_config['psm'])
+                        if 0 <= psm_value < psm_combo.count():
+                            psm_combo.setCurrentIndex(psm_value)
+                            logger.debug(f"设置PSM模式为: {psm_value}")
+                
+                # 加载OEM引擎
+                if 'oem' in ocr_config:
+                    oem_combo = self.ocr_tab.left_panel.findChild(QObject, "oem_combo")
+                    if oem_combo:
+                        oem_value = int(ocr_config['oem'])
+                        if 0 <= oem_value < oem_combo.count():
+                            oem_combo.setCurrentIndex(oem_value)
+                            logger.debug(f"设置OEM引擎为: {oem_value}")
+                
+                # 加载精度设置
+                if 'accuracy' in ocr_config:
+                    accuracy_slider = self.ocr_tab.left_panel.findChild(QObject, "accuracy_slider")
+                    if accuracy_slider:
+                        accuracy_slider.setValue(ocr_config['accuracy'])
+                        logger.debug(f"设置精度为: {ocr_config['accuracy']}")
+                        
+                        # 同时更新精度显示值
+                        accuracy_value = self.ocr_tab.left_panel.findChild(QObject, "accuracy_value")
+                        if accuracy_value:
+                            accuracy_value.setText(f"{ocr_config['accuracy']}%")
+                
+                # 加载预处理选项
+                if 'preprocess' in ocr_config:
+                    preprocess_check = self.ocr_tab.left_panel.findChild(QObject, "preprocess_check")
+                    if preprocess_check:
+                        preprocess_check.setChecked(ocr_config['preprocess'])
+                        logger.debug(f"设置预处理为: {ocr_config['preprocess']}")
+                
+                # 加载文本修正选项
+                if 'autocorrect' in ocr_config:
+                    autocorrect_check = self.ocr_tab.left_panel.findChild(QObject, "autocorrect_check")
+                    if autocorrect_check:
+                        autocorrect_check.setChecked(ocr_config['autocorrect'])
+                        logger.debug(f"设置自动修正为: {ocr_config['autocorrect']}")
+                
+                # 加载刷新频率设置
+                refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
+                if refresh_combo and 'refresh_rate_text' in ocr_config:
+                    # 禁用用户交互标志，防止弹出对话框
+                    self._user_interaction = False
+                    
+                    refresh_rate_text = ocr_config['refresh_rate_text']
+                    refresh_rate_value = ocr_config.get('refresh_rate_value', 1000)
+                    
+                    # 如果是预设选项之一，直接设置
+                    if refresh_rate_text in ["低 (1秒)", "中 (0.5秒)", "高 (0.2秒)"]:
+                        refresh_combo.setCurrentText(refresh_rate_text)
+                    else:
+                        # 如果是自定义，检查是否包含毫秒值
+                        if refresh_rate_text.startswith("自定义 (") and refresh_rate_text.endswith("毫秒)"):
+                            # 已经有毫秒值，直接使用
+                            custom_text = refresh_rate_text
+                        else:
+                            # 没有毫秒值，创建带有毫秒值的文本
+                            custom_text = f"自定义 ({refresh_rate_value}毫秒)"
+                        
+                        # 检查是否已存在自定义选项
+                        index = refresh_combo.findText(custom_text)
+                        
+                        # 如果没有找到匹配项，检查是否有其他自定义选项
+                        if index < 0:
+                            for i in range(refresh_combo.count()):
+                                if refresh_combo.itemText(i).startswith("自定义 ("):
+                                    index = i
+                                    break
+                        
+                        # 如果找到了自定义选项，更新它；否则添加新选项
+                        refresh_combo.blockSignals(True)
+                        if index >= 0:
+                            refresh_combo.setItemText(index, custom_text)
+                        else:
+                            refresh_combo.addItem(custom_text)
+                            index = refresh_combo.count() - 1
+                        
+                        refresh_combo.setCurrentIndex(index)
+                        refresh_combo.blockSignals(False)
+                    
+                    # 保存刷新频率值，但不启动定时器
+                    if 'refresh_rate_value' in ocr_config:
+                        refresh_rate_value = ocr_config['refresh_rate_value']
+                        # 只更新文本识别器配置，不启动定时器
+                        self.text_recognizer.set_config({'refresh_rate': refresh_rate_value})
+                    
+                    # 恢复用户交互标志
+                    self._user_interaction = True
+                        
+                    logger.debug(f"设置刷新频率为: {refresh_rate_text} ({refresh_rate_value}毫秒)")
+                
+                # 加载屏幕区域配置
+                if 'screen_area' in ocr_config:
+                    area_config = ocr_config['screen_area']
+                    logger.debug(f"屏幕区域配置: {area_config}")
+                    
+                    if 'x' in area_config and 'y' in area_config and 'width' in area_config and 'height' in area_config:
+                        # 创建区域对象
+                        self.current_rect = QRect(
+                            area_config['x'], area_config['y'],
+                            area_config['width'], area_config['height']
+                        )
+                        logger.info(f"已从配置加载区域: {self.current_rect}")
+                        
+                        # 更新UI
+                        self.update_area_spinners()
+                        
+                        # 更新预览
+                        self.update_preview()
+                
+                # 确保OCR处理器更新了所有配置
+                self.ocr_processor.set_config(ocr_config)
+                logger.info("已更新OCR处理器配置")
+            else:
+                logger.warning("配置中没有ocr字段")
+        except Exception as e:
+            logger.error(f"从配置加载OCR设置失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    def start_monitoring(self):
+        """开始监控，启动刷新定时器"""
+        if not self.current_rect:
+            logger.warning("没有选择区域，无法开始监控")
+            return False
+        
+        # 获取当前刷新频率设置
+        refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
+        if refresh_combo:
+            refresh_rate_text = refresh_combo.currentText()
+            # 获取对应的毫秒值
+            if refresh_rate_text == "低 (1秒)":
+                refresh_rate = 1000
+            elif refresh_rate_text == "中 (0.5秒)":
+                refresh_rate = 500
+            elif refresh_rate_text == "高 (0.2秒)":
+                refresh_rate = 200
+            elif refresh_rate_text.startswith("自定义 (") and refresh_rate_text.endswith("毫秒)"):
+                # 从文本中提取毫秒值
+                try:
+                    value_str = refresh_rate_text.replace("自定义 (", "").replace("毫秒)", "")
+                    refresh_rate = int(value_str)
+                except ValueError:
+                    # 如果提取失败，使用文本识别器中保存的配置
+                    refresh_rate = self.text_recognizer.config.get('refresh_rate', 1000)
+            else:  # 其他自定义
+                # 使用文本识别器中保存的配置
+                refresh_rate = self.text_recognizer.config.get('refresh_rate', 1000)
+            
+            # 启动定时器
+            if self.refresh_timer.isActive():
+                self.refresh_timer.stop()
+            self.refresh_timer.start(refresh_rate)
+            self.is_monitoring = True
+            
+            # 立即更新一次预览
+            self.update_preview()
+            
+            logger.info(f"OCR监控已启动，刷新频率: {refresh_rate}毫秒")
+            return True
+        else:
+            logger.warning("无法获取刷新频率设置，使用默认值1000毫秒")
+            self.refresh_timer.start(1000)
+            self.is_monitoring = True
+            return True
+    
+    def stop_monitoring(self):
+        """停止监控，停止刷新定时器"""
+        if self.refresh_timer.isActive():
+            self.refresh_timer.stop()
+        self.is_monitoring = False
+        logger.info("OCR监控已停止")
+        return True

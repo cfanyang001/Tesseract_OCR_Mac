@@ -1,8 +1,8 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QTabWidget, QVBoxLayout, QWidget, QStatusBar, QMenuBar, QMenu, QAction,
-    QHBoxLayout, QSplitter
+    QHBoxLayout, QSplitter, QMessageBox
 )
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QIcon
 
 from ui.components.tabs.ocr_tab import OCRTab
@@ -89,26 +89,58 @@ class MainWindow(QMainWindow):
         
         # 初始化控制器
         self.init_controllers()
+        
+        # 使用定时器确保在UI完全加载后应用配置
+        QTimer.singleShot(100, self.apply_initial_config)
     
     def init_controllers(self):
         """初始化控制器"""
         try:
-            # 初始化OCR控制器
-            self.ocr_controller = OCRController(self.ocr_tab)
-            logger.info("OCR控制器初始化成功")
-            
             # 初始化配置控制器
             self.config_controller = ConfigController(self.config_panel)
             logger.info("配置控制器初始化成功")
             
-            # 设置初始标签页配置
-            self.on_tab_changed(self.tabs.currentIndex())
+            # 初始化OCR控制器
+            self.ocr_controller = OCRController(self.ocr_tab)
+            logger.info("OCR控制器初始化成功")
+            
+            # 初始化监控控制器
+            from ui.controllers.tabs.monitor_controller import MonitorController
+            self.monitor_controller = MonitorController(self.monitor_tab)
+            logger.info("监控控制器初始化成功")
+            
+            # 注册所有标签页到配置控制器
+            self.register_tabs_to_config_controller()
             
             # 其他控制器...
             # TODO: 添加其他控制器初始化
             
         except Exception as e:
             logger.error(f"控制器初始化失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    def register_tabs_to_config_controller(self):
+        """注册所有标签页到配置控制器"""
+        try:
+            # 注册所有标签页
+            self.config_controller.register_tab("OCR设置", self.ocr_tab)
+            self.config_controller.register_tab("监控设置", self.monitor_tab)
+            self.config_controller.register_tab("任务管理", self.task_tab)
+            self.config_controller.register_tab("动作配置", self.actions_tab)
+            self.config_controller.register_tab("日志", self.logs_tab)
+            logger.info("所有标签页已注册到配置控制器")
+        except Exception as e:
+            logger.error(f"注册标签页到配置控制器失败: {e}")
+    
+    def apply_initial_config(self):
+        """应用初始配置到所有标签页"""
+        try:
+            if hasattr(self, 'config_controller'):
+                self.config_controller.apply_config_to_all_tabs()
+                logger.info("已应用初始配置到所有标签页")
+        except Exception as e:
+            logger.error(f"应用初始配置失败: {e}")
     
     def on_tab_changed(self, index):
         """当标签页改变时"""
@@ -117,17 +149,29 @@ class MainWindow(QMainWindow):
             tab_name = self.tabs.tabText(index)
             tab_widget = self.tabs.widget(index)
             
+            # 如果离开监控标签页，停止监控
+            if hasattr(self, 'monitor_controller') and self.monitor_controller.is_monitoring:
+                # 获取之前的标签页名称
+                previous_index = getattr(self, '_previous_tab_index', -1)
+                if previous_index >= 0:
+                    previous_tab_name = self.tabs.tabText(previous_index)
+                    if previous_tab_name == "监控设置" and tab_name != "监控设置":
+                        # 停止监控
+                        self.monitor_controller.toggle_monitoring()
+                        logger.info("离开监控标签页，自动停止监控")
+            
             # 更新配置面板
             self.config_panel.set_current_tab(tab_name, tab_widget)
             
-            # 应用配置到标签页
-            if hasattr(self, 'config_controller'):
-                self.config_controller.apply_config_to_tab(tab_name, tab_widget)
+            # 记住当前标签页索引
+            self._previous_tab_index = index
             
             logger.info(f"切换到标签页: {tab_name}")
         
         except Exception as e:
             logger.error(f"切换标签页时发生错误: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def create_menu_bar(self):
         """创建菜单栏"""
@@ -181,11 +225,25 @@ class MainWindow(QMainWindow):
     def save_current_config(self):
         """保存当前配置"""
         if hasattr(self, 'config_controller'):
-            # 获取当前标签页
-            index = self.tabs.currentIndex()
-            tab_name = self.tabs.tabText(index)
-            tab_widget = self.tabs.widget(index)
-            
-            # 获取配置并保存
-            config = self.config_controller.get_config_from_tab(tab_name, tab_widget)
-            self.config_panel.save_current_config()
+            try:
+                # 获取当前标签页名称和组件
+                current_index = self.tabs.currentIndex()
+                tab_name = self.tabs.tabText(current_index)
+                tab_widget = self.tabs.widget(current_index)
+                
+                # 获取当前配置名称（从配置面板获取）
+                current_config = self.config_panel.current_config
+                
+                # 从当前标签页获取最新的配置
+                config_data = self.config_controller.get_config_from_tab(tab_name, tab_widget)
+                
+                # 发送保存信号
+                self.config_panel.config_saved.emit(current_config, config_data)
+                
+                # 显示成功消息
+                QMessageBox.information(self, "保存成功", f"配置 '{current_config}' 已保存")
+                
+                logger.info(f"配置 {current_config} 已保存")
+            except Exception as e:
+                logger.error(f"保存配置失败: {e}")
+                QMessageBox.warning(self, "保存失败", f"保存配置时发生错误: {e}")

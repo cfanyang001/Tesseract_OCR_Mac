@@ -14,6 +14,9 @@ class OCRTab(QWidget):
     def __init__(self):
         super().__init__()
         
+        # 控制器引用，将由OCRController设置
+        self.controller = None
+        
         # 创建主布局
         self.layout = QHBoxLayout(self)
         

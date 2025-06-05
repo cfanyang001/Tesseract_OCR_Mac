@@ -1,8 +1,9 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton,
-    QLineEdit, QGroupBox, QFormLayout, QMessageBox, QScrollArea
+    QLineEdit, QGroupBox, QFormLayout, QMessageBox, QScrollArea, QInputDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal
+from loguru import logger
 
 class ConfigPanel(QWidget):
     """配置面板组件，显示在主窗口右侧，用于管理不同标签页的配置"""
@@ -93,7 +94,7 @@ class ConfigPanel(QWidget):
     def create_new_config(self):
         """创建新配置"""
         # 弹出对话框输入新配置名称
-        name, ok = QLineEdit.getText(self, "新建配置", "请输入配置名称:")
+        name, ok = QInputDialog.getText(self, "新建配置", "请输入配置名称:")
         
         if ok and name:
             if name in self.configs:
@@ -106,23 +107,30 @@ class ConfigPanel(QWidget):
             # 更新下拉框
             self.config_combo.addItem(name)
             self.config_combo.setCurrentText(name)
+            
+            # 更新当前配置名称
+            self.current_config = name
+            
+            # 发送配置改变信号
+            self.config_changed.emit(name)
+            
+            logger.info(f"已创建新配置: {name}")
     
     def save_current_config(self):
         """保存当前配置"""
-        if not self.current_tab:
-            QMessageBox.information(self, "提示", "请先选择一个标签页")
-            return
-        
-        # 获取当前标签页的配置
-        config_data = self.get_current_tab_config()
-        
-        # 更新配置字典
-        self.configs[self.current_config] = config_data
-        
-        # 发出信号
-        self.config_saved.emit(self.current_config, config_data)
-        
-        QMessageBox.information(self, "成功", f"配置 '{self.current_config}' 已保存")
+        try:
+            # 获取主窗口
+            main_window = self.window()
+            if main_window and hasattr(main_window, 'save_current_config'):
+                # 通过主窗口的方法保存配置
+                main_window.save_current_config()
+            else:
+                logger.warning("无法获取主窗口或主窗口没有save_current_config方法")
+                # 使用旧的方式保存
+                config_data = self.configs.get(self.current_config, {})
+                self.config_saved.emit(self.current_config, config_data)
+        except Exception as e:
+            logger.error(f"保存配置失败: {e}")
     
     def delete_current_config(self):
         """删除当前配置"""
@@ -193,16 +201,9 @@ class ConfigPanel(QWidget):
         # 获取当前配置
         config = self.configs.get(self.current_config, {}).get("ocr", {})
         
-        # 图像预处理选项
-        group = QGroupBox("图像预处理选项")
+        # 高级OCR选项
+        group = QGroupBox("高级OCR选项")
         form = QFormLayout()
-        
-        # 预处理开关
-        preprocess_combo = QComboBox()
-        preprocess_combo.addItems(["启用", "禁用"])
-        preprocess_value = config.get("preprocess", True)
-        preprocess_combo.setCurrentText("启用" if preprocess_value else "禁用")
-        form.addRow("启用预处理:", preprocess_combo)
         
         # 自动修正
         autocorrect_combo = QComboBox()
@@ -211,21 +212,12 @@ class ConfigPanel(QWidget):
         autocorrect_combo.setCurrentText("启用" if autocorrect_value else "禁用")
         form.addRow("文本自动修正:", autocorrect_combo)
         
-        # 精度设置
-        accuracy_values = ["低", "中", "高", "极高"]
-        accuracy_combo = QComboBox()
-        accuracy_combo.addItems(accuracy_values)
-        accuracy = config.get("accuracy", 80)
-        if accuracy < 70:
-            accuracy_index = 0  # 低
-        elif accuracy < 80:
-            accuracy_index = 1  # 中
-        elif accuracy < 90:
-            accuracy_index = 2  # 高
-        else:
-            accuracy_index = 3  # 极高
-        accuracy_combo.setCurrentIndex(accuracy_index)
-        form.addRow("识别精度:", accuracy_combo)
+        # 识别模式
+        mode_combo = QComboBox()
+        mode_combo.addItems(["标准模式", "快速模式", "精确模式"])
+        mode = config.get("recognition_mode", "标准模式")
+        mode_combo.setCurrentText(mode)
+        form.addRow("识别模式:", mode_combo)
         
         group.setLayout(form)
         self.config_content_layout.addWidget(group)
@@ -292,33 +284,6 @@ class ConfigPanel(QWidget):
     
     def get_current_tab_config(self):
         """获取当前标签页的配置"""
-        # 这里应该从UI组件中获取当前配置值
-        # 简化实现，返回一个示例配置
-        if self.current_tab == "OCR设置":
-            return {
-                "ocr": {
-                    "language": "eng",  # 这些参数将从OCR标签页获取，而不是在配置面板中设置
-                    "psm": "3",
-                    "oem": "3",
-                    "preprocess": True,
-                    "autocorrect": False,
-                    "accuracy": 80,
-                    "result_cache_size": 10
-                }
-            }
-        elif self.current_tab == "监控设置":
-            return {
-                "monitor": {
-                    "interval": "2",
-                    "match_mode": "包含匹配"
-                }
-            }
-        elif self.current_tab == "动作配置":
-            return {
-                "actions": {
-                    "delay": "0.5",
-                    "retries": "1"
-                }
-            }
-        else:
-            return {} 
+        # 这个方法不再使用，但保留为空方法以防其他地方调用
+        logger.warning("get_current_tab_config方法已废弃，请使用全局配置管理")
+        return self.configs.get(self.current_config, {}) 

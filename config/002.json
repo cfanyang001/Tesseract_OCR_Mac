@@ -1,18 +1,18 @@
 {
   "ocr": {
     "language": "eng",
-    "psm": "6",
-    "oem": "2",
+    "psm": "10",
+    "oem": "3",
     "accuracy": 70,
-    "preprocess": false,
+    "preprocess": true,
     "autocorrect": false,
     "refresh_rate_text": "自定义 (2000毫秒)",
     "refresh_rate_value": 2000,
     "result_cache_size": 10,
     "screen_area": {
-      "x": 983,
-      "y": 552,
-      "width": 374,
+      "x": 1750,
+      "y": 725,
+      "width": 170,
       "height": 82,
       "is_selected": true
     }
