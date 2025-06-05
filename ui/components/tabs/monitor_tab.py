@@ -155,9 +155,9 @@ class MonitorTab(QWidget):
         layout.setSpacing(8)
         
         # 规则表格
-        self.rule_table = QTableWidget(0, 5)
+        self.rule_table = QTableWidget(0, 6)
         self.rule_table.setObjectName("rule_table")
-        self.rule_table.setHorizontalHeaderLabels(["编号", "类型", "内容", "选项", "操作"])
+        self.rule_table.setHorizontalHeaderLabels(["编号", "类型", "内容", "选项", "操作", "删除"])
         self.rule_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.rule_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.rule_table.setMaximumHeight(150)

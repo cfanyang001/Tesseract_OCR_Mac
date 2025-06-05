@@ -1,5 +1,8 @@
-from PyQt5.QtCore import QObject, pyqtSlot, Qt, QTimer
-from PyQt5.QtWidgets import QMessageBox, QPushButton, QLabel, QComboBox, QLineEdit, QCheckBox, QTableWidgetItem, QTableWidget, QSpinBox
+from PyQt5.QtCore import QObject, pyqtSlot, Qt, QTimer, QPoint, QEvent
+from PyQt5.QtWidgets import (
+    QMessageBox, QPushButton, QLabel, QComboBox, QLineEdit, QCheckBox, 
+    QTableWidgetItem, QTableWidget, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout, QApplication
+)
 from loguru import logger
 
 from core.rule_matcher import Rule
@@ -337,14 +340,68 @@ class MonitorController(QObject):
             if rule.params.get('trim'):
                 options.append("忽略首尾空格")
             
-            options_item = QTableWidgetItem(", ".join(options))
-            table.setItem(row, 4, options_item)
+            table.setItem(row, 4, QTableWidgetItem(", ".join(options)))
+            
+            # 添加删除按钮
+            self._add_delete_button(table, row, rule.rule_id)
             
         except Exception as e:
             logger.error(f"添加规则到表格失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
-    
+
+    def _add_delete_button(self, table, row, rule_id):
+        """添加删除按钮到表格"""
+        from PyQt5.QtWidgets import QPushButton
+        
+        # 创建删除按钮
+        delete_btn = QPushButton("删除")
+        delete_btn.setFixedWidth(60)
+        delete_btn.setStyleSheet("QPushButton { background-color: #F44336; color: white; border-radius: 3px; }")
+        
+        # 存储规则ID为属性
+        delete_btn.setProperty("rule_id", rule_id)
+        
+        # 连接删除按钮点击事件
+        delete_btn.clicked.connect(lambda: self.on_delete_rule(rule_id))
+        
+        # 添加按钮到表格
+        table.setCellWidget(row, 5, delete_btn)
+
+    def on_delete_rule(self, rule_id):
+        """删除规则按钮点击事件"""
+        try:
+            # 获取主窗口
+            main_window = self.monitor_tab.window()
+            if not main_window or not hasattr(main_window, 'monitor_engine'):
+                logger.warning("无法获取监控引擎")
+                return
+                
+            monitor_engine = main_window.monitor_engine
+            if not monitor_engine or not hasattr(monitor_engine, 'rule_matcher'):
+                logger.warning("无法获取规则匹配器")
+                return
+            
+            # 删除规则
+            if monitor_engine.rule_matcher.remove_rule(rule_id):
+                # 更新表格
+                self.update_rule_table()
+                
+                # 保存配置
+                monitor_engine.save_config()
+                
+                # 保存当前标签页配置
+                self.save_monitor_tab_config()
+                
+                logger.info(f"规则已删除: {rule_id}")
+            else:
+                logger.warning(f"删除规则失败: {rule_id}")
+        
+        except Exception as e:
+            logger.error(f"删除规则失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
     def get_rule_type_text(self, rule_type: str) -> str:
         """根据规则类型获取规则类型文本"""
         type_map = {
@@ -669,8 +726,7 @@ class MonitorController(QObject):
         """更新规则表格"""
         try:
             # 获取规则表格
-            rule_list_group = self.monitor_tab.rule_list_group
-            rule_table = rule_list_group.findChild(QTableWidget, "rule_table")
+            rule_table = self.monitor_tab.rule_table
             if not rule_table:
                 logger.warning("无法获取规则表格")
                 return
@@ -722,6 +778,9 @@ class MonitorController(QObject):
                 
                 options_item = QTableWidgetItem(", ".join(options))
                 rule_table.setItem(row_position, 4, options_item)
+                
+                # 添加删除按钮
+                self._add_delete_button(rule_table, row_position, rule_id)
             
             logger.info(f"已更新规则表格，共{len(rules)}条规则")
             
@@ -755,60 +814,152 @@ class MonitorController(QObject):
     def on_select_mouse_pos(self):
         """选择坐标按钮点击事件"""
         try:
-            # 创建消息框提示用户
-            QMessageBox.information(
-                self.monitor_tab,
-                "选择鼠标位置",
-                "请将鼠标移动到目标位置，然后按下 Ctrl+Shift+P 键记录坐标。\n\n" +
-                "按下 Esc 键取消选择。"
-            )
-            
-            # 创建一个全局键盘监听器
-            import keyboard
+            from PyQt5.QtCore import Qt, QTimer, QPoint
+            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox
             import pyautogui
+            import time
             
-            # 定义回调函数
-            def on_hotkey_pressed():
-                try:
-                    # 获取当前鼠标位置
-                    x, y = pyautogui.position()
-                    
-                    # 更新坐标输入框
-                    self.monitor_tab.mouse_x_spin.setValue(x)
-                    self.monitor_tab.mouse_y_spin.setValue(y)
-                    
-                    # 移除键盘监听器
-                    keyboard.unhook_all()
-                    
-                    # 显示成功消息
-                    QMessageBox.information(
-                        self.monitor_tab,
-                        "坐标已记录",
-                        f"已记录鼠标位置: ({x}, {y})"
-                    )
-                except Exception as e:
-                    logger.error(f"记录鼠标位置失败: {e}")
-                    QMessageBox.warning(
-                        self.monitor_tab,
-                        "错误",
-                        f"记录鼠标位置失败: {e}"
-                    )
+            # 获取主窗口
+            main_window = self.monitor_tab.window()
             
-            # 定义取消函数
-            def on_cancel():
-                # 移除键盘监听器
-                keyboard.unhook_all()
+            # 创建一个自定义对话框
+            class ClickCaptureDialog(QDialog):
+                def __init__(self, parent=None, only_text_areas=False):
+                    super().__init__(parent, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool)
+                    self.setWindowTitle("选择鼠标位置")
+                    self.setStyleSheet("background-color: rgba(0, 0, 0, 150); color: white;")
+                    self.setFixedSize(300, 130)
+                    
+                    # 创建布局
+                    self.layout = QVBoxLayout(self)
+                    
+                    # 添加说明标签
+                    self.label = QLabel("请移动到目标位置，然后点击鼠标左键确认位置。\n按ESC键取消。")
+                    self.label.setAlignment(Qt.AlignCenter)
+                    self.label.setStyleSheet("font-size: 14px;")
+                    self.layout.addWidget(self.label)
+                    
+                    # 创建一个标签显示当前坐标
+                    self.coords_label = QLabel("当前坐标: (0, 0)")
+                    self.coords_label.setAlignment(Qt.AlignCenter)
+                    self.coords_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+                    self.layout.addWidget(self.coords_label)
+                    
+                    # 添加限制文本区域选项
+                    self.option_layout = QHBoxLayout()
+                    self.text_areas_only_check = QCheckBox("仅限文本区域")
+                    self.text_areas_only_check.setChecked(only_text_areas)
+                    self.text_areas_only_check.setStyleSheet("color: white;")
+                    self.option_layout.addStretch()
+                    self.option_layout.addWidget(self.text_areas_only_check)
+                    self.option_layout.addStretch()
+                    self.layout.addLayout(self.option_layout)
+                    
+                    # 设置当前鼠标位置
+                    self.current_pos = (0, 0)
+                    
+                    # 保存文本区域
+                    self.text_areas = []
+                    
+                    # 当前是否在有效区域
+                    self.is_valid_area = False
+                    
+                    # 安装事件过滤器以捕获全局鼠标事件
+                    self.installEventFilter(self)
                 
-                # 显示取消消息
+                def updateCoords(self):
+                    """更新坐标显示"""
+                    try:
+                        # 获取当前鼠标位置
+                        self.current_pos = pyautogui.position()
+                        x, y = self.current_pos
+                        
+                        # 检查是否在文本区域内
+                        if self.text_areas_only_check.isChecked():
+                            self.is_valid_area = self.is_in_text_area(x, y)
+                            area_text = "有效区域" if self.is_valid_area else "无效区域"
+                            style = "color: #4CAF50;" if self.is_valid_area else "color: #F44336;"
+                            self.coords_label.setText(f"当前坐标: ({x}, {y}) - {area_text}")
+                            self.coords_label.setStyleSheet(f"font-size: 16px; font-weight: bold; {style}")
+                        else:
+                            self.is_valid_area = True
+                            self.coords_label.setText(f"当前坐标: ({x}, {y})")
+                            self.coords_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+                        
+                        # 更新对话框位置，跟随鼠标
+                        screen_geometry = QApplication.desktop().screenGeometry()
+                        dialog_x = min(x + 20, screen_geometry.width() - self.width())
+                        dialog_y = min(y + 20, screen_geometry.height() - self.height())
+                        self.move(dialog_x, dialog_y)
+                    except Exception as e:
+                        logger.error(f"更新坐标失败: {e}")
+                
+                def set_text_areas(self, areas):
+                    """设置文本区域"""
+                    self.text_areas = areas
+                
+                def is_in_text_area(self, x, y):
+                    """检查坐标是否在文本区域内"""
+                    for area in self.text_areas:
+                        if (area['x'] <= x <= area['x'] + area['width'] and 
+                            area['y'] <= y <= area['y'] + area['height']):
+                            return True
+                    return False
+                
+                def eventFilter(self, obj, event):
+                    """事件过滤器，用于捕获全局鼠标事件"""
+                    if event.type() == QEvent.MouseButtonPress:
+                        if event.button() == Qt.LeftButton:
+                            if self.is_valid_area:
+                                self.accept()
+                            return True
+                    elif event.type() == QEvent.KeyPress:
+                        if event.key() == Qt.Key_Escape:
+                            self.reject()
+                            return True
+                    return super().eventFilter(obj, event)
+            
+            # 获取OCR识别到的文本区域
+            text_areas = []
+            if main_window and hasattr(main_window, 'ocr_controller'):
+                # 获取OCR结果
+                ocr_controller = main_window.ocr_controller
+                if hasattr(ocr_controller, 'last_ocr_details') and ocr_controller.last_ocr_details:
+                    if 'boxes' in ocr_controller.last_ocr_details:
+                        text_areas = ocr_controller.last_ocr_details['boxes']
+            
+            # 创建对话框
+            dialog = ClickCaptureDialog(self.monitor_tab)
+            dialog.set_text_areas(text_areas)
+            
+            # 创建并启动更新定时器
+            timer = QTimer(dialog)
+            timer.timeout.connect(dialog.updateCoords)
+            timer.start(50)  # 每50毫秒更新一次
+            
+            # 显示对话框在当前鼠标位置附近
+            cursor_pos = pyautogui.position()
+            dialog.move(cursor_pos[0] + 20, cursor_pos[1] + 20)
+            
+            # 显示对话框
+            QApplication.setOverrideCursor(Qt.CrossCursor)  # 设置鼠标为十字光标
+            result = dialog.exec_()
+            QApplication.restoreOverrideCursor()  # 恢复鼠标光标
+            
+            # 停止定时器
+            timer.stop()
+            
+            # 处理结果
+            if result == QDialog.Accepted:
+                x, y = dialog.current_pos
+                self.monitor_tab.mouse_x_spin.setValue(x)
+                self.monitor_tab.mouse_y_spin.setValue(y)
+                
                 QMessageBox.information(
                     self.monitor_tab,
-                    "已取消",
-                    "已取消选择鼠标位置"
+                    "坐标已记录",
+                    f"已记录鼠标位置: ({x}, {y})"
                 )
-            
-            # 注册热键
-            keyboard.add_hotkey('ctrl+shift+p', on_hotkey_pressed)
-            keyboard.add_hotkey('esc', on_cancel)
             
         except Exception as e:
             logger.error(f"选择鼠标位置失败: {e}")

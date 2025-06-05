@@ -9,36 +9,6 @@
         "trim": true
       },
       "last_match_time": null
-    },
-    "a43e1940-845f-48e8-93c5-d97e4238eacf": {
-      "id": "a43e1940-845f-48e8-93c5-d97e4238eacf",
-      "type": "contains",
-      "content": "accept",
-      "params": {
-        "case_sensitive": false,
-        "trim": true
-      },
-      "last_match_time": null
-    },
-    "505a1d24-2467-4df2-9236-c3a0a43508e6": {
-      "id": "505a1d24-2467-4df2-9236-c3a0a43508e6",
-      "type": "contains",
-      "content": "accept",
-      "params": {
-        "case_sensitive": false,
-        "trim": true
-      },
-      "last_match_time": null
-    },
-    "d4796328-bbed-4718-a7ad-4d7fd18d715c": {
-      "id": "d4796328-bbed-4718-a7ad-4d7fd18d715c",
-      "type": "contains",
-      "content": "accept",
-      "params": {
-        "case_sensitive": false,
-        "trim": true
-      },
-      "last_match_time": null
     }
   },
   "rule_combination": "OR",

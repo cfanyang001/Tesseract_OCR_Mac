@@ -61,6 +61,10 @@ class OCRController(QObject):
         # 监控状态标志
         self.is_monitoring = False
         
+        # OCR识别结果
+        self.last_ocr_text = ""
+        self.last_ocr_details = {}
+        
         # 自动刷新定时器
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.update_preview)
@@ -334,40 +338,52 @@ class OCRController(QObject):
     
     @pyqtSlot()
     def update_preview(self):
-        """更新预览区域"""
-        if not self.current_rect:
-            logger.warning("没有选择区域，无法更新预览")
-            return
-        
+        """更新预览"""
         try:
-            # 获取当前区域坐标
-            x = self.current_rect.x()
-            y = self.current_rect.y()
-            width = self.current_rect.width()
-            height = self.current_rect.height()
-            
-            logger.info(f"尝试捕获屏幕区域: x={x}, y={y}, width={width}, height={height}")
-            
-            # 使用MacScreenCaptureSelector捕获区域
-            pixmap, temp_filename = MacScreenCaptureSelector.capture_rect(self.current_rect)
-            
-            if not pixmap or pixmap.isNull():
-                logger.error("区域截图失败")
+            # 检查是否有选择的区域
+            if not self.current_rect:
+                logger.debug("没有选择区域，无法更新预览")
                 return
             
-            # 设置截图预览
-            self.ocr_tab.preview.set_image(pixmap)
+            # 捕获屏幕区域
+            image = self.screen_capture.capture_area(self.current_rect)
             
-            # 更新当前截图路径
-            if self.current_screenshot and os.path.exists(self.current_screenshot) and self.current_screenshot != temp_filename:
-                try:
-                    os.remove(self.current_screenshot)
-                except:
-                    pass
-            self.current_screenshot = temp_filename
-            
-            logger.info(f"预览已更新: {pixmap.width()}x{pixmap.height()}")
-            
+            # 转换为QPixmap
+            if image is not None:
+                # 创建临时文件保存预览图像
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
+                    temp_filename = temp_file.name
+                
+                # 保存图像
+                import cv2
+                cv2.imwrite(temp_filename, image)
+                
+                # 保存当前截图路径
+                self.current_screenshot = temp_filename
+                
+                # 加载QPixmap
+                pixmap = QPixmap(temp_filename)
+                
+                # 设置预览图像
+                self.ocr_tab.preview.set_image(pixmap)
+                
+                logger.debug(f"已更新预览，图像大小: {pixmap.width()}x{pixmap.height()}")
+                
+                # 获取当前选择的区域信息
+                x, y, width, height = (
+                    self.current_rect.x(),
+                    self.current_rect.y(),
+                    self.current_rect.width(),
+                    self.current_rect.height()
+                )
+                
+                # 更新状态栏
+                main_window = self.ocr_tab.window()
+                if main_window and hasattr(main_window, 'status_bar'):
+                    main_window.status_bar.update_screen_area(
+                        f"{x},{y} {width}x{height}"
+                    )
+                
         except Exception as e:
             logger.error(f"更新预览失败: {e}")
             import traceback
@@ -377,173 +393,98 @@ class OCRController(QObject):
     def test_ocr(self):
         """测试OCR识别"""
         try:
-            # 直接使用当前预览图像进行识别
-            pixmap = self.ocr_tab.preview.preview_image
-            
-            if pixmap is None or pixmap.isNull():
+            # 检查是否选择了区域
+            if not self.current_rect:
                 QMessageBox.warning(
                     self.ocr_tab, 
                     "警告", 
-                    "预览图像为空，请先选择区域"
+                    "请先选择一个区域"
                 )
                 return
             
-            # 将QPixmap转换为PIL Image
-            import numpy as np
-            from PIL import Image
-            import io
-            import cv2
+            # 使用文本识别器识别当前区域
+            text, details = self.text_recognizer.recognize_area(self.current_rect)
             
-            # 将QPixmap转换为QImage
-            qimage = pixmap.toImage()
+            # 保存识别结果
+            self.last_ocr_text = text
+            self.last_ocr_details = details
             
-            # 获取图像数据
-            width = qimage.width()
-            height = qimage.height()
-            
-            # 转换为RGB格式
-            if qimage.format() != QImage.Format_RGB32:
-                qimage = qimage.convertToFormat(QImage.Format_RGB32)
-            
-            # 获取图像数据
-            bits = qimage.bits()
-            bits.setsize(height * width * 4)  # 4 bytes per pixel (RGBA)
-            
-            # 转换为numpy数组
-            arr = np.frombuffer(bits, np.uint8).reshape((height, width, 4))
-            
-            # 仅使用RGB通道
-            img_np = arr[:, :, :3]
-            
-            # 保存原始图像用于显示
-            original_img = Image.fromarray(img_np)
-            
-            # 创建多种预处理图像
-            processed_images = []
-            
-            # 1. 灰度图像
-            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-            processed_images.append(("灰度", gray))
-            
-            # 2. 反相图像 - 对于白色文字在黑色背景上效果好
-            inverted = cv2.bitwise_not(gray)
-            processed_images.append(("反相", inverted))
-            
-            # 3. 二值化 - 自适应阈值
-            binary_adaptive = cv2.adaptiveThreshold(
-                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                cv2.THRESH_BINARY, 11, 2
+            # 更新结果显示
+            result_text = self.ocr_tab.right_panel.findChild(
+                QObject, "result_text"
             )
-            processed_images.append(("二值化(自适应)", binary_adaptive))
+            if result_text:
+                result_text.setPlainText(text)
             
-            # 4. 二值化 - Otsu's方法
-            _, binary_otsu = cv2.threshold(
-                gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            # 更新详细信息
+            confidence_label = self.ocr_tab.right_panel.findChild(
+                QObject, "confidence_label"
             )
-            processed_images.append(("二值化(Otsu)", binary_otsu))
+            if confidence_label:
+                confidence = details.get('confidence', 0)
+                confidence_label.setText(f"置信度: {confidence}%")
             
-            # 5. 边缘增强
-            edges = cv2.Canny(gray, 100, 200)
-            processed_images.append(("边缘", edges))
+            word_count_label = self.ocr_tab.right_panel.findChild(
+                QObject, "word_count_label"
+            )
+            if word_count_label:
+                word_count = details.get('word_count', 0)
+                word_count_label.setText(f"词数: {word_count}")
             
-            # 6. 锐化
-            kernel_sharpen = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-            sharpened = cv2.filter2D(gray, -1, kernel_sharpen)
-            processed_images.append(("锐化", sharpened))
-            
-            # 7. 膨胀 - 连接断开的笔画
-            kernel = np.ones((2, 2), np.uint8)
-            dilated = cv2.dilate(binary_adaptive, kernel, iterations=1)
-            processed_images.append(("膨胀", dilated))
-            
-            # 8. 放大图像
-            scale_factor = 2
-            enlarged = cv2.resize(binary_adaptive, None, 
-                                 fx=scale_factor, fy=scale_factor, 
-                                 interpolation=cv2.INTER_CUBIC)
-            processed_images.append(("放大", enlarged))
-            
-            # 获取当前选择的PSM和OEM模式
-            psm_combo = self.ocr_tab.left_panel.findChild(QObject, "psm_combo")
-            oem_combo = self.ocr_tab.left_panel.findChild(QObject, "oem_combo")
-            
-            psm_index = psm_combo.currentIndex() if psm_combo else 7
-            oem_index = oem_combo.currentIndex() if oem_combo else 1
-            
-            # 获取当前语言
-            lang_code = self.ocr_processor.config['language']
-            
-            # 尝试所有预处理方法并保存结果
-            results = []
-            
-            for name, img in processed_images:
-                # 构建Tesseract配置
-                config = f'--psm {psm_index} --oem {oem_index} -l {lang_code}'
+            char_count_label = self.ocr_tab.right_panel.findChild(
+                QObject, "char_count_label"
+            )
+            if char_count_label:
+                char_count = details.get('char_count', 0)
+                char_count_label.setText(f"字符数: {char_count}")
                 
-                # 识别文本
-                pil_img = Image.fromarray(img)
-                text, details = self.ocr_processor.recognize_text(
-                    np.array(pil_img), config=config
-                )
+            # 显示文本框位置
+            preview_label = self.ocr_tab.right_panel.findChild(
+                QObject, "preview_label"
+            )
+            if preview_label and self.current_screenshot:
+                # 加载预览图像
+                pixmap = QPixmap(self.current_screenshot)
                 
-                # 保存结果
-                if text.strip():
-                    results.append((text, details['confidence'], name, img))
+                # 创建带有文本框的图像
+                if 'boxes' in details and pixmap and not pixmap.isNull():
+                    # 转换为OpenCV图像
+                    image = self.pixmap_to_cv2(pixmap)
+                    
+                    # 在图像上绘制文本框
+                    boxes = details.get('boxes', [])
+                    for box in boxes:
+                        x, y, w, h = box['x'], box['y'], box['width'], box['height']
+                        # 调整坐标到预览图像的大小
+                        scale_x = pixmap.width() / self.current_rect.width()
+                        scale_y = pixmap.height() / self.current_rect.height()
+                        
+                        x = int(x * scale_x)
+                        y = int(y * scale_y)
+                        w = int(w * scale_x)
+                        h = int(h * scale_y)
+                        
+                        # 绘制矩形
+                        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                        
+                    # 转换回QPixmap
+                    highlighted_pixmap = self.cv2_to_pixmap(image)
+                    
+                    # 显示图像
+                    preview_label.setPixmap(highlighted_pixmap)
+                    preview_label.setScaledContents(True)
             
-            # 如果没有结果，尝试直接使用原始图像
-            if not results:
-                config = f'--psm {psm_index} --oem {oem_index} -l {lang_code}'
-                text, details = self.ocr_processor.recognize_text(
-                    img_np, config=config
-                )
-                if text.strip():
-                    results.append((text, details['confidence'], "原始", img_np))
-            
-            # 选择最佳结果
-            if results:
-                # 按置信度排序
-                results.sort(key=lambda x: x[1], reverse=True)
-                best_text, best_confidence, best_method, best_img = results[0]
-                
-                # 显示最佳预处理图像
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-                temp_filename = temp_file.name
-                temp_file.close()
-                
-                # 保存最佳图像
-                Image.fromarray(best_img).save(temp_filename)
-                
-                # 加载到QPixmap并显示
-                enhanced_pixmap = QPixmap(temp_filename)
-                if not enhanced_pixmap.isNull():
-                    self.ocr_tab.preview.set_image(enhanced_pixmap)
-                
-                # 显示结果
-                result_text = f"""识别文本:
-{best_text}
-
-置信度: {best_confidence}%
-预处理方法: {best_method}
-PSM模式: {psm_index}
-OEM引擎: {oem_index}
-"""
-                self.ocr_tab.result_label.setText(result_text)
-                logger.info(f"OCR测试完成: '{best_text}', 置信度: {best_confidence}%, 方法: {best_method}")
-                
-                # 清理临时文件
-                try:
-                    os.remove(temp_filename)
-                except:
-                    pass
-            else:
-                self.ocr_tab.result_label.setText("未识别到文本")
-                logger.warning("OCR未能识别任何文本")
+            logger.info(f"OCR测试成功，识别文本: {len(text)} 字符")
             
         except Exception as e:
-            logger.error(f"OCR测试失败: {str(e)}")
+            logger.error(f"OCR测试失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            self.ocr_tab.result_label.setText(f"OCR识别失败: {e}")
+            QMessageBox.warning(
+                self.ocr_tab, 
+                "错误", 
+                f"OCR测试失败: {e}"
+            )
     
     def update_area_spinners(self):
         """更新区域坐标输入框"""
@@ -756,19 +697,28 @@ OEM引擎: {oem_index}
     
     @pyqtSlot(str, dict)
     def on_text_recognized(self, text, details):
-        """文本识别回调"""
-        if not text:
-            return
-        
-        # 更新结果显示
-        result_text = f"""识别文本:
-{text}
-
-置信度: {details['confidence']}%
-词数: {details['word_count']}
-字符数: {details['char_count']}
-"""
-        self.ocr_tab.result_label.setText(result_text)
+        """文本识别信号处理"""
+        try:
+            # 保存识别结果
+            self.last_ocr_text = text
+            self.last_ocr_details = details
+            
+            # 更新结果显示
+            result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
+            if result_text:
+                result_text.setPlainText(text)
+            
+            # 更新主窗口的监控引擎
+            main_window = self.ocr_tab.window()
+            if main_window and hasattr(main_window, 'monitor_engine'):
+                main_window.monitor_engine.process_text(text, details)
+                
+            logger.debug(f"收到文本识别结果: {len(text)} 字符")
+            
+        except Exception as e:
+            logger.error(f"处理文本识别结果失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     @pyqtSlot(str)
     def on_error(self, error):
@@ -1129,3 +1079,60 @@ OEM引擎: {oem_index}
         self.is_monitoring = False
         logger.info("OCR监控已停止")
         return True
+
+    def pixmap_to_cv2(self, pixmap):
+        """将QPixmap转换为OpenCV图像"""
+        try:
+            import numpy as np
+            import cv2
+            
+            # 将QPixmap转换为QImage
+            qimage = pixmap.toImage()
+            
+            # 确保图像格式正确
+            if qimage.format() != QImage.Format_RGB32:
+                qimage = qimage.convertToFormat(QImage.Format_RGB32)
+            
+            # 获取图像数据
+            width = qimage.width()
+            height = qimage.height()
+            
+            # 获取图像数据
+            bits = qimage.bits()
+            bits.setsize(height * width * 4)  # 4 bytes per pixel (RGBA)
+            
+            # 转换为numpy数组
+            arr = np.frombuffer(bits, np.uint8).reshape((height, width, 4))
+            
+            # 仅使用RGB通道
+            img_cv = arr[:, :, :3]
+            
+            return img_cv
+        except Exception as e:
+            logger.error(f"将QPixmap转换为OpenCV图像失败: {e}")
+            return None
+    
+    def cv2_to_pixmap(self, img_cv):
+        """将OpenCV图像转换为QPixmap"""
+        try:
+            import numpy as np
+            import cv2
+            
+            # 确保图像是RGB格式
+            if len(img_cv.shape) == 2:  # 灰度图像
+                img_cv = cv2.cvtColor(img_cv, cv2.COLOR_GRAY2RGB)
+            elif img_cv.shape[2] == 4:  # RGBA图像
+                img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGBA2RGB)
+            
+            # 转换为QImage
+            height, width, channel = img_cv.shape
+            bytes_per_line = 3 * width
+            qimg = QImage(img_cv.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            
+            # 转换为QPixmap
+            pixmap = QPixmap.fromImage(qimg)
+            
+            return pixmap
+        except Exception as e:
+            logger.error(f"将OpenCV图像转换为QPixmap失败: {e}")
+            return QPixmap()

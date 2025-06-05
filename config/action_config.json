@@ -13,6 +13,20 @@
       },
       "name": "鼠标点击 - (0,0) 左键 1次",
       "last_executed": null
+    },
+    "b428966c-b08d-43ad-9a66-95ae448cc352": {
+      "id": "b428966c-b08d-43ad-9a66-95ae448cc352",
+      "type": "mouse",
+      "params": {
+        "mouse_type": "click",
+        "x": 1854,
+        "y": 750,
+        "clicks": 1,
+        "interval": 1.0,
+        "button": "left"
+      },
+      "name": "鼠标点击 - (1854,750) 左键 1次",
+      "last_executed": null
     }
   },
   "sequences": {},
