@@ -1,7 +1,5 @@
-# 排除测试文件夹
+# 排除测试文件夹和任务清单
 tests/
-
-# 排除任务清单文件
 OCR监控软件开发任务清单.md
 
 # 排除日志文件
@@ -11,40 +9,12 @@ logs/
 # Python相关文件
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-*.egg-info/
-.installed.cfg
-*.egg
 
 # 虚拟环境
 venv/
 ENV/
-pyvenv.cfg
-bin/
-include/
-lib/
 
-# IDE相关文件
+# IDE和系统文件
 .idea/
 .vscode/
-*.swp
-*.swo
-
-# macOS系统文件
 .DS_Store
-.AppleDouble
-.LSOverride 
