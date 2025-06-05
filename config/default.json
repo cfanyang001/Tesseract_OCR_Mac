@@ -1,0 +1,15 @@
+{
+  "ocr": {
+    "language": "eng",
+    "psm": "3",
+    "oem": "3"
+  },
+  "monitor": {
+    "interval": "2",
+    "match_mode": "包含匹配"
+  },
+  "actions": {
+    "delay": "0.5",
+    "retries": "1"
+  }
+} 
