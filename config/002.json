@@ -4,16 +4,13 @@
     "psm": "3",
     "oem": "3",
     "accuracy": 70,
-    "preprocess": false,
+    "preprocess": true,
     "autocorrect": false,
-    "refresh_rate_text": "低 (1秒)",
-    "refresh_rate_value": 1000,
-    "result_cache_size": 10,
     "screen_area": {
-      "x": 1652,
-      "y": 635,
-      "width": 268,
-      "height": 180,
+      "x": 1672,
+      "y": 664,
+      "width": 248,
+      "height": 130,
       "is_selected": true
     }
   },
@@ -23,7 +20,7 @@
     "rule_combination": "OR",
     "custom_expression": "",
     "trigger_condition": "规则满足时",
-    "action_type": "点击鼠标",
+    "action_type": "发送通知",
     "rules": {
       "b17dfb01-17fa-41fd-bd5d-43082f142dbc": {
         "id": "b17dfb01-17fa-41fd-bd5d-43082f142dbc",
@@ -35,6 +32,7 @@
         },
         "last_match_time": null
       }
-    }
+    },
+    "trigger_delay": 0
   }
 }

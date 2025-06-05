@@ -65,7 +65,11 @@ class OCRController(QObject):
         self.last_ocr_text = ""
         self.last_ocr_details = {}
         
-        # 自动刷新定时器
+        # 自动刷新预览定时器 - 用于非监控状态下的预览刷新
+        self.auto_refresh_timer = QTimer()
+        self.auto_refresh_timer.timeout.connect(self.update_preview)
+        
+        # 监控刷新定时器 - 用于监控状态下的预览刷新
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.update_preview)
         
@@ -132,13 +136,6 @@ class OCRController(QObject):
         )
         if autocorrect_check:
             autocorrect_check.stateChanged.connect(self.update_autocorrect)
-        
-        # 刷新频率
-        refresh_combo = self.ocr_tab.left_panel.findChild(
-            QObject, "refresh_combo"
-        )
-        if refresh_combo:
-            refresh_combo.currentTextChanged.connect(self.update_refresh_rate)
         
         # 区域坐标输入
         for name in ["x_spin", "y_spin", "width_spin", "height_spin"]:
@@ -264,21 +261,11 @@ class OCRController(QObject):
                 # 恢复信号
                 autocorrect_check.blockSignals(False)
             
-            # 设置刷新频率
-            refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
-            if refresh_combo and 'refresh_rate_text' in ocr_config:
-                # 阻止信号触发
-                refresh_combo.blockSignals(True)
-                
-                refresh_rate_text = ocr_config.get('refresh_rate_text', "低 (1秒)")
-                refresh_combo.setCurrentText(refresh_rate_text)
-                logger.debug(f"设置刷新频率为: {refresh_rate_text}")
-                
-                # 恢复信号
-                refresh_combo.blockSignals(False)
-            
             # 尝试从配置加载保存的区域
             self.load_area_from_config()
+            
+            # 启动自动刷新预览
+            self.start_auto_refresh()
             
             logger.info("OCR UI初始化完成")
         except Exception as e:
@@ -323,6 +310,10 @@ class OCRController(QObject):
             
             # 保存区域到配置
             self.save_area_to_config()
+            
+            # 确保自动刷新已启动
+            if not self.auto_refresh_timer.isActive():
+                self.start_auto_refresh()
             
             logger.info(f"区域已选择: {self.current_rect}")
             
@@ -410,6 +401,9 @@ class OCRController(QObject):
                     "请先选择一个区域"
                 )
                 return
+            
+            # 先更新预览，确保使用最新的屏幕内容
+            self.update_preview()
             
             # 使用文本识别器识别当前区域
             text, details = self.text_recognizer.recognize_area(self.current_rect)
@@ -595,150 +589,6 @@ class OCRController(QObject):
         self.ocr_processor.set_config({'autocorrect': bool(state)})
         logger.info(f"OCR文本自动修正已{'启用' if state else '禁用'}")
     
-    @pyqtSlot(str)
-    def update_refresh_rate(self, rate_text):
-        """更新刷新频率"""
-        # 获取刷新频率值 (毫秒)
-        if rate_text == "低 (1秒)":
-            rate = 1000
-        elif rate_text == "中 (0.5秒)":
-            rate = 500
-        elif rate_text == "高 (0.2秒)":
-            rate = 200
-        else:  # 自定义
-            # 检查是否是用户交互导致的更新（而不是加载配置时）
-            if getattr(self, '_user_interaction', True):
-                # 弹出对话框让用户输入自定义时间
-                custom_rate, ok = QInputDialog.getInt(
-                    self.ocr_tab, 
-                    "自定义刷新频率", 
-                    "请输入刷新间隔(毫秒):", 
-                    1000, 100, 10000, 100
-                )
-                if ok:
-                    rate = custom_rate
-                    # 更新下拉框显示自定义值
-                    refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
-                    if refresh_combo:
-                        # 检查是否已存在自定义选项
-                        custom_text = f"自定义 ({rate}毫秒)"
-                        index = refresh_combo.findText(custom_text)
-                        
-                        # 如果没有找到匹配项，检查是否有其他自定义选项
-                        if index < 0:
-                            for i in range(refresh_combo.count()):
-                                if refresh_combo.itemText(i).startswith("自定义 ("):
-                                    index = i
-                                    break
-                        
-                        # 如果找到了自定义选项，更新它；否则添加新选项
-                        refresh_combo.blockSignals(True)
-                        if index >= 0:
-                            refresh_combo.setItemText(index, custom_text)
-                        else:
-                            refresh_combo.addItem(custom_text)
-                            index = refresh_combo.count() - 1
-                        
-                        refresh_combo.setCurrentIndex(index)
-                        refresh_combo.blockSignals(False)
-                        
-                        # 更新rate_text用于日志和保存
-                        rate_text = custom_text
-                else:
-                    # 如果用户取消，恢复到默认值
-                    rate = 1000
-                    # 恢复下拉框选择
-                    refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
-                    if refresh_combo:
-                        refresh_combo.blockSignals(True)
-                        refresh_combo.setCurrentText("低 (1秒)")
-                        refresh_combo.blockSignals(False)
-                        rate_text = "低 (1秒)"
-            else:
-                # 如果是加载配置导致的更新，使用配置中的值
-                rate = self.text_recognizer.config.get('refresh_rate', 1000)
-        
-        # 更新文本识别器配置
-        self.text_recognizer.set_config({'refresh_rate': rate})
-        
-        # 如果正在监控，更新定时器
-        if self.is_monitoring and self.refresh_timer.isActive():
-            self.refresh_timer.stop()
-            self.refresh_timer.start(rate)
-        
-        # 保存刷新频率到配置
-        self.save_refresh_rate_to_config(rate_text, rate)
-        
-        logger.info(f"刷新频率已更新: {rate_text} ({rate}毫秒)")
-    
-    def save_refresh_rate_to_config(self, rate_text, rate_value):
-        """保存刷新频率到配置"""
-        try:
-            # 获取主窗口
-            main_window = self.ocr_tab.window()
-            if not main_window or not hasattr(main_window, 'config_controller'):
-                logger.warning("无法获取配置控制器，无法保存刷新频率")
-                return
-            
-            # 获取配置控制器
-            config_controller = main_window.config_controller
-            
-            # 获取当前配置
-            current_config = config_controller.config_manager.current_config
-            config = config_controller.config_manager.get_config(current_config)
-            
-            # 确保OCR配置部分存在
-            if 'ocr' not in config:
-                config['ocr'] = {}
-            
-            # 保存刷新频率设置
-            config['ocr']['refresh_rate_text'] = rate_text
-            config['ocr']['refresh_rate_value'] = rate_value
-            
-            # 保存配置
-            config_controller.config_manager.save_config(current_config, config)
-            logger.debug(f"已保存刷新频率: {rate_text} ({rate_value}毫秒)")
-            
-        except Exception as e:
-            logger.error(f"保存刷新频率失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-    
-    @pyqtSlot(str, dict)
-    def on_text_recognized(self, text, details):
-        """文本识别信号处理"""
-        try:
-            # 保存识别结果
-            self.last_ocr_text = text
-            self.last_ocr_details = details
-            
-            # 更新结果显示
-            result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
-            if result_text:
-                result_text.setPlainText(text)
-            
-            # 更新主窗口的监控引擎
-            main_window = self.ocr_tab.window()
-            if main_window and hasattr(main_window, 'monitor_engine'):
-                main_window.monitor_engine.process_text(text, details)
-                
-            logger.debug(f"收到文本识别结果: {len(text)} 字符")
-            
-        except Exception as e:
-            logger.error(f"处理文本识别结果失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-    
-    @pyqtSlot(str)
-    def on_error(self, error):
-        """错误回调"""
-        logger.error(f"OCR错误: {error}")
-        QMessageBox.warning(
-            self.ocr_tab, 
-            "OCR错误", 
-            f"OCR处理过程中发生错误: {error}"
-        )
-    
     @pyqtSlot(int)
     def update_psm(self, index):
         """更新PSM模式"""
@@ -814,37 +664,7 @@ class OCRController(QObject):
                 ocr_config['autocorrect'] = autocorrect_check.isChecked()
                 logger.debug(f"保存自动修正选项: {autocorrect_check.isChecked()}")
             
-            # 获取刷新频率设置
-            refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
-            if refresh_combo:
-                refresh_rate_text = refresh_combo.currentText()
-                
-                # 获取对应的毫秒值
-                if refresh_rate_text == "低 (1秒)":
-                    refresh_rate_value = 1000
-                elif refresh_rate_text == "中 (0.5秒)":
-                    refresh_rate_value = 500
-                elif refresh_rate_text == "高 (0.2秒)":
-                    refresh_rate_value = 200
-                elif refresh_rate_text.startswith("自定义 (") and refresh_rate_text.endswith("毫秒)"):
-                    # 从文本中提取毫秒值
-                    try:
-                        value_str = refresh_rate_text.replace("自定义 (", "").replace("毫秒)", "")
-                        refresh_rate_value = int(value_str)
-                    except ValueError:
-                        # 如果提取失败，使用定时器的值或默认值
-                        refresh_rate_value = self.refresh_timer.interval() if self.refresh_timer.isActive() else 1000
-                else:  # 其他自定义，使用定时器的值
-                    refresh_rate_value = self.refresh_timer.interval() if self.refresh_timer.isActive() else 1000
-                
-                ocr_config['refresh_rate_text'] = refresh_rate_text
-                ocr_config['refresh_rate_value'] = refresh_rate_value
-                logger.debug(f"保存刷新频率: {refresh_rate_text} ({refresh_rate_value}毫秒)")
-            
-            # 保存结果缓存大小
-            ocr_config['result_cache_size'] = self.ocr_processor.config.get('result_cache_size', 10)
-            
-            # 保存屏幕区域
+            # 获取屏幕区域
             if self.current_rect:
                 ocr_config['screen_area'] = {
                     'x': self.current_rect.x(),
@@ -953,59 +773,6 @@ class OCRController(QObject):
                         autocorrect_check.setChecked(ocr_config['autocorrect'])
                         logger.debug(f"设置自动修正为: {ocr_config['autocorrect']}")
                 
-                # 加载刷新频率设置
-                refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
-                if refresh_combo and 'refresh_rate_text' in ocr_config:
-                    # 禁用用户交互标志，防止弹出对话框
-                    self._user_interaction = False
-                    
-                    refresh_rate_text = ocr_config['refresh_rate_text']
-                    refresh_rate_value = ocr_config.get('refresh_rate_value', 1000)
-                    
-                    # 如果是预设选项之一，直接设置
-                    if refresh_rate_text in ["低 (1秒)", "中 (0.5秒)", "高 (0.2秒)"]:
-                        refresh_combo.setCurrentText(refresh_rate_text)
-                    else:
-                        # 如果是自定义，检查是否包含毫秒值
-                        if refresh_rate_text.startswith("自定义 (") and refresh_rate_text.endswith("毫秒)"):
-                            # 已经有毫秒值，直接使用
-                            custom_text = refresh_rate_text
-                        else:
-                            # 没有毫秒值，创建带有毫秒值的文本
-                            custom_text = f"自定义 ({refresh_rate_value}毫秒)"
-                        
-                        # 检查是否已存在自定义选项
-                        index = refresh_combo.findText(custom_text)
-                        
-                        # 如果没有找到匹配项，检查是否有其他自定义选项
-                        if index < 0:
-                            for i in range(refresh_combo.count()):
-                                if refresh_combo.itemText(i).startswith("自定义 ("):
-                                    index = i
-                                    break
-                        
-                        # 如果找到了自定义选项，更新它；否则添加新选项
-                        refresh_combo.blockSignals(True)
-                        if index >= 0:
-                            refresh_combo.setItemText(index, custom_text)
-                        else:
-                            refresh_combo.addItem(custom_text)
-                            index = refresh_combo.count() - 1
-                        
-                        refresh_combo.setCurrentIndex(index)
-                        refresh_combo.blockSignals(False)
-                    
-                    # 保存刷新频率值，但不启动定时器
-                    if 'refresh_rate_value' in ocr_config:
-                        refresh_rate_value = ocr_config['refresh_rate_value']
-                        # 只更新文本识别器配置，不启动定时器
-                        self.text_recognizer.set_config({'refresh_rate': refresh_rate_value})
-                    
-                    # 恢复用户交互标志
-                    self._user_interaction = True
-                        
-                    logger.debug(f"设置刷新频率为: {refresh_rate_text} ({refresh_rate_value}毫秒)")
-                
                 # 加载屏幕区域配置
                 if 'screen_area' in ocr_config:
                     area_config = ocr_config['screen_area']
@@ -1035,57 +802,100 @@ class OCRController(QObject):
             import traceback
             logger.error(traceback.format_exc())
 
+    def start_auto_refresh(self):
+        """启动自动刷新预览"""
+        if not self.current_rect:
+            return
+            
+        # 获取监控设置中的间隔时间
+        refresh_interval = 1500  # 默认值：1.5秒
+        
+        # 尝试从监控标签页获取刷新间隔
+        try:
+            main_window = self.ocr_tab.window()
+            if main_window and hasattr(main_window, 'monitor_controller'):
+                monitor_controller = main_window.monitor_controller
+                # 获取监控标签页中的间隔设置
+                monitor_tab = monitor_controller.monitor_tab
+                if hasattr(monitor_tab, 'interval_combo'):
+                    interval_text = monitor_tab.interval_combo.currentText()
+                    try:
+                        # 监控间隔以秒为单位，转换为毫秒
+                        interval_seconds = int(interval_text)
+                        refresh_interval = interval_seconds * 1000
+                        logger.debug(f"使用监控设置的刷新间隔: {interval_seconds}秒")
+                    except ValueError:
+                        logger.warning(f"无法解析监控间隔值: {interval_text}，使用默认值")
+        except Exception as e:
+            logger.warning(f"获取监控间隔设置失败: {e}，使用默认值")
+        
+        # 设置自动刷新间隔，最小500毫秒，最大5秒
+        refresh_interval = max(500, min(refresh_interval, 5000))
+        
+        # 启动定时器
+        if self.auto_refresh_timer.isActive():
+            self.auto_refresh_timer.stop()
+        self.auto_refresh_timer.start(refresh_interval)
+        logger.debug(f"已启动OCR预览自动刷新，间隔: {refresh_interval}毫秒")
+
+    def stop_auto_refresh(self):
+        """停止自动刷新预览"""
+        if self.auto_refresh_timer.isActive():
+            self.auto_refresh_timer.stop()
+            logger.debug("已停止OCR预览自动刷新")
+            
     def start_monitoring(self):
         """开始监控，启动刷新定时器"""
         if not self.current_rect:
             logger.warning("没有选择区域，无法开始监控")
             return False
         
-        # 获取当前刷新频率设置
-        refresh_combo = self.ocr_tab.left_panel.findChild(QObject, "refresh_combo")
-        if refresh_combo:
-            refresh_rate_text = refresh_combo.currentText()
-            # 获取对应的毫秒值
-            if refresh_rate_text == "低 (1秒)":
-                refresh_rate = 1000
-            elif refresh_rate_text == "中 (0.5秒)":
-                refresh_rate = 500
-            elif refresh_rate_text == "高 (0.2秒)":
-                refresh_rate = 200
-            elif refresh_rate_text.startswith("自定义 (") and refresh_rate_text.endswith("毫秒)"):
-                # 从文本中提取毫秒值
-                try:
-                    value_str = refresh_rate_text.replace("自定义 (", "").replace("毫秒)", "")
-                    refresh_rate = int(value_str)
-                except ValueError:
-                    # 如果提取失败，使用文本识别器中保存的配置
-                    refresh_rate = self.text_recognizer.config.get('refresh_rate', 1000)
-            else:  # 其他自定义
-                # 使用文本识别器中保存的配置
-                refresh_rate = self.text_recognizer.config.get('refresh_rate', 1000)
-            
-            # 启动定时器
-            if self.refresh_timer.isActive():
-                self.refresh_timer.stop()
-            self.refresh_timer.start(refresh_rate)
-            self.is_monitoring = True
-            
-            # 立即更新一次预览
-            self.update_preview()
-            
-            logger.info(f"OCR监控已启动，刷新频率: {refresh_rate}毫秒")
-            return True
-        else:
-            logger.warning("无法获取刷新频率设置，使用默认值1000毫秒")
-            self.refresh_timer.start(1000)
-            self.is_monitoring = True
-            return True
+        # 获取监控设置中的刷新间隔
+        refresh_interval = 1000  # 默认1秒
+        
+        # 尝试从监控标签页获取刷新间隔
+        try:
+            main_window = self.ocr_tab.window()
+            if main_window and hasattr(main_window, 'monitor_controller'):
+                monitor_controller = main_window.monitor_controller
+                # 获取监控标签页中的间隔设置
+                monitor_tab = monitor_controller.monitor_tab
+                if hasattr(monitor_tab, 'interval_combo'):
+                    interval_text = monitor_tab.interval_combo.currentText()
+                    try:
+                        interval_seconds = int(interval_text)
+                        refresh_interval = interval_seconds * 1000
+                        logger.debug(f"使用监控设置的刷新间隔: {interval_seconds}秒")
+                    except ValueError:
+                        logger.warning(f"无法解析监控间隔值: {interval_text}，使用默认值")
+        except Exception as e:
+            logger.warning(f"获取监控间隔设置失败: {e}，使用默认值")
+        
+        # 停止自动刷新定时器
+        if self.auto_refresh_timer.isActive():
+            self.auto_refresh_timer.stop()
+        
+        # 启动监控定时器
+        if self.refresh_timer.isActive():
+            self.refresh_timer.stop()
+        self.refresh_timer.start(refresh_interval)
+        self.is_monitoring = True
+        
+        # 立即更新一次预览
+        self.update_preview()
+        
+        logger.info(f"OCR监控已启动，刷新频率: {refresh_interval}毫秒")
+        return True
     
     def stop_monitoring(self):
         """停止监控，停止刷新定时器"""
         if self.refresh_timer.isActive():
             self.refresh_timer.stop()
         self.is_monitoring = False
+        
+        # 重新启动自动刷新定时器
+        self.start_auto_refresh()
+        
         logger.info("OCR监控已停止")
         return True
 
@@ -1145,3 +955,38 @@ class OCRController(QObject):
         except Exception as e:
             logger.error(f"将OpenCV图像转换为QPixmap失败: {e}")
             return QPixmap()
+
+    @pyqtSlot(str, dict)
+    def on_text_recognized(self, text, details):
+        """文本识别信号处理"""
+        try:
+            # 保存识别结果
+            self.last_ocr_text = text
+            self.last_ocr_details = details
+            
+            # 更新结果显示
+            result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
+            if result_text:
+                result_text.setPlainText(text)
+            
+            # 更新主窗口的监控引擎
+            main_window = self.ocr_tab.window()
+            if main_window and hasattr(main_window, 'monitor_engine'):
+                main_window.monitor_engine.process_text(text, details)
+                
+            logger.debug(f"收到文本识别结果: {len(text)} 字符")
+            
+        except Exception as e:
+            logger.error(f"处理文本识别结果失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    @pyqtSlot(str)
+    def on_error(self, error):
+        """错误回调"""
+        logger.error(f"OCR错误: {error}")
+        QMessageBox.warning(
+            self.ocr_tab, 
+            "OCR错误", 
+            f"OCR处理过程中发生错误: {error}"
+        )

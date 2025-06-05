@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem, QTableWidget, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout, QApplication
 )
 from loguru import logger
+import re
 
 from core.rule_matcher import Rule
 
@@ -291,63 +292,60 @@ class MonitorController(QObject):
     
     @pyqtSlot()
     def on_add_rule(self):
-        """添加规则按钮点击事件"""
+        """添加规则"""
         try:
-            # 获取主窗口
-            main_window = self.monitor_tab.window()
-            if not main_window:
-                logger.warning("无法获取主窗口")
-                return
-            
-            # 获取监控引擎
-            if not hasattr(main_window, 'monitor_controller') or not hasattr(main_window, 'monitor_engine'):
-                logger.warning("主窗口没有monitor_engine属性")
-                QMessageBox.warning(
-                    self.monitor_tab, 
-                    "错误", 
-                    "无法获取监控引擎，请先配置监控设置"
-                )
-                return
-            
-            # 获取规则设置
-            rule_group = self.monitor_tab.rule_group
-            
             # 获取规则类型
-            rule_type_combo = rule_group.findChild(QComboBox)
+            rule_type_combo = self.monitor_tab.rule_group.findChild(QComboBox, "rule_type_combo")
             if not rule_type_combo:
-                logger.warning("无法获取规则类型下拉框")
+                logger.error("无法找到规则类型下拉框")
                 return
-            
+                
             rule_type_text = rule_type_combo.currentText()
             rule_type = self.get_rule_type_from_text(rule_type_text)
             
             # 获取规则内容
-            rule_content_edit = rule_group.findChild(QLineEdit)
-            if not rule_content_edit:
-                logger.warning("无法获取规则内容输入框")
-                return
-            
-            rule_content = rule_content_edit.text().strip()
-            if not rule_content:
+            rule_content_edit = self.monitor_tab.rule_group.findChild(QLineEdit, "rule_content_edit")
+            if not rule_content_edit or not rule_content_edit.text().strip():
                 QMessageBox.warning(
-                    self.monitor_tab, 
-                    "警告", 
-                    "规则内容不能为空"
+                    self.monitor_tab,
+                    "输入错误",
+                    "请输入规则内容"
                 )
                 return
+                
+            rule_content = rule_content_edit.text().strip()
             
             # 获取规则选项
-            case_sensitive_check = None
-            trim_check = None
-            
-            for check in rule_group.findChildren(QCheckBox):
-                if check.text() == "区分大小写":
-                    case_sensitive_check = check
-                elif check.text() == "忽略首尾空格":
-                    trim_check = check
-            
+            case_sensitive_check = self.monitor_tab.rule_group.findChild(QCheckBox, "case_sensitive_check")
             case_sensitive = case_sensitive_check.isChecked() if case_sensitive_check else False
+            
+            trim_check = self.monitor_tab.rule_group.findChild(QCheckBox, "trim_check")
             trim = trim_check.isChecked() if trim_check else True
+            
+            # 验证规则内容
+            if rule_type == Rule.TYPE_REGEX:
+                try:
+                    # 测试正则表达式是否有效
+                    re.compile(rule_content)
+                except re.error as e:
+                    QMessageBox.warning(
+                        self.monitor_tab,
+                        "正则表达式错误",
+                        f"正则表达式格式错误: {e}"
+                    )
+                    return
+                    
+            elif rule_type == Rule.TYPE_NUMERIC:
+                try:
+                    # 测试数值是否有效
+                    float(rule_content)
+                except ValueError:
+                    QMessageBox.warning(
+                        self.monitor_tab,
+                        "数值错误",
+                        "请输入有效的数值"
+                    )
+                    return
             
             # 创建规则参数
             params = {
@@ -355,37 +353,43 @@ class MonitorController(QObject):
                 'trim': trim
             }
             
-            # 创建规则
+            # 对于数值比较规则，添加操作符
+            if rule_type == Rule.TYPE_NUMERIC:
+                # 获取操作符，默认为等于
+                params['operator'] = Rule.OP_EQ
+            
+            # 创建规则对象
             rule = Rule(
-                rule_id=None,  # 自动生成ID
                 rule_type=rule_type,
                 content=rule_content,
                 params=params
             )
             
-            # 添加规则到监控引擎
+            # 添加规则到引擎
+            main_window = self.monitor_tab.window()
+            if not main_window or not hasattr(main_window, 'monitor_engine'):
+                logger.error("无法获取监控引擎")
+                return
+                
             monitor_engine = main_window.monitor_engine
-            if monitor_engine and hasattr(monitor_engine, 'rule_matcher'):
-                monitor_engine.rule_matcher.add_rule(rule)
-                logger.info(f"规则已添加: {rule_type}:{rule_content}")
-                
-                # 添加规则到表格
-                self.add_rule_to_table(rule)
-                
-                # 清空输入框
-                rule_content_edit.clear()
-                
-                # 保存监控引擎配置
-                monitor_engine.save_config()
-                
-                # 保存当前标签页配置
-                self.save_monitor_tab_config()
-                
-                QMessageBox.information(
-                    self.monitor_tab,
-                    "成功",
-                    f"规则已添加: {self.get_rule_type_text(rule_type)} - {rule_content}"
-                )
+            if not monitor_engine or not hasattr(monitor_engine, 'rule_matcher'):
+                logger.error("监控引擎未初始化")
+                return
+            
+            # 添加规则
+            monitor_engine.rule_matcher.add_rule(rule)
+            
+            # 添加规则到表格
+            self.add_rule_to_table(rule)
+            
+            # 清空规则内容输入框
+            rule_content_edit.clear()
+            
+            # 保存配置
+            self.save_monitor_tab_config()
+            
+            # 通知用户
+            logger.info(f"已添加规则: {rule.id}")
             
         except Exception as e:
             logger.error(f"添加规则失败: {e}")
@@ -520,13 +524,28 @@ class MonitorController(QObject):
     def on_rule_combination_changed(self, combination_text):
         """规则组合方式改变事件"""
         try:
+            # 获取自定义表达式输入框
+            rule_list_group = self.monitor_tab.rule_list_group
+            custom_expr_edit = rule_list_group.findChild(QLineEdit, "custom_expr_edit")
+            if not custom_expr_edit:
+                logger.error("无法找到自定义表达式输入框")
+                return
+            
+            # 根据选择启用或禁用自定义表达式输入框
+            if combination_text == "自定义组合":
+                custom_expr_edit.setEnabled(True)
+            else:
+                custom_expr_edit.setEnabled(False)
+            
             # 获取主窗口
             main_window = self.monitor_tab.window()
             if not main_window or not hasattr(main_window, 'monitor_engine'):
+                logger.warning("无法获取监控引擎")
                 return
                 
             monitor_engine = main_window.monitor_engine
             if not monitor_engine or not hasattr(monitor_engine, 'rule_matcher'):
+                logger.warning("无法获取规则匹配器")
                 return
                 
             # 设置规则组合方式
@@ -538,11 +557,7 @@ class MonitorController(QObject):
                 monitor_engine.rule_matcher.set_rule_combination("CUSTOM")
                 
                 # 获取自定义表达式
-                rule_list_group = self.monitor_tab.rule_list_group
-                custom_expr_edit = rule_list_group.findChild(QLineEdit, "custom_expr_edit")
-                if custom_expr_edit:
-                    # 启用自定义表达式输入框
-                    custom_expr_edit.setEnabled(True)
+                if custom_expr_edit.text().strip():
                     # 设置自定义表达式
                     monitor_engine.rule_matcher.set_custom_expression(custom_expr_edit.text())
             
@@ -556,140 +571,137 @@ class MonitorController(QObject):
             
         except Exception as e:
             logger.error(f"设置规则组合方式失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     @pyqtSlot()
     def on_add_action(self):
-        """添加动作按钮点击事件"""
+        """添加动作"""
         try:
             # 获取主窗口
             main_window = self.monitor_tab.window()
-            if not main_window or not hasattr(main_window, 'monitor_engine'):
+            if not main_window:
+                logger.error("无法获取主窗口")
                 return
                 
-            # 获取动作设置
-            action_group = self.monitor_tab.action_group
-            
-            # 获取触发条件
-            trigger_combo = action_group.findChild(QComboBox, "trigger_combo")
-            if not trigger_combo:
+            # 获取动作执行器
+            if not hasattr(main_window, 'monitor_engine') or not hasattr(main_window.monitor_engine, 'action_executor'):
+                logger.error("无法获取动作执行器")
+                QMessageBox.warning(
+                    self.monitor_tab, 
+                    "错误", 
+                    "无法获取动作执行器，请检查系统配置"
+                )
                 return
-            trigger_condition = trigger_combo.currentText()
             
-            # 获取延迟
-            delay_spin = action_group.findChild(QSpinBox, "delay_spin")
-            if not delay_spin:
-                return
-            delay = delay_spin.value()
+            action_executor = main_window.monitor_engine.action_executor
             
             # 获取动作类型
-            action_combo = action_group.findChild(QComboBox, "action_combo")
+            action_combo = self.monitor_tab.action_group.findChild(QComboBox, "action_combo")
             if not action_combo:
+                logger.error("无法找到动作类型下拉框")
                 return
-            action_type = action_combo.currentText()
-            
-            # 创建动作
-            from core.action_executor import Action
-            
-            # 根据动作类型处理不同参数
-            if action_type == "点击鼠标":
-                # 获取鼠标点击设置
-                if not hasattr(self.monitor_tab, 'mouse_x_spin') or \
-                   not hasattr(self.monitor_tab, 'mouse_y_spin') or \
-                   not hasattr(self.monitor_tab, 'click_count_spin') or \
-                   not hasattr(self.monitor_tab, 'click_interval_spin') or \
-                   not hasattr(self.monitor_tab, 'mouse_button_combo'):
-                    QMessageBox.warning(
-                        self.monitor_tab, 
-                        "错误", 
-                        "无法获取鼠标点击设置控件"
-                    )
-                    return
                 
-                # 获取鼠标点击参数
-                mouse_x = self.monitor_tab.mouse_x_spin.value()
-                mouse_y = self.monitor_tab.mouse_y_spin.value()
-                click_count = self.monitor_tab.click_count_spin.value()
-                click_interval = self.monitor_tab.click_interval_spin.value() / 1000.0  # 转换为秒
+            action_type_text = action_combo.currentText()
+            action_type = self.get_action_type_from_text(action_type_text)
+            
+            # 获取动作参数
+            action_param_edit = self.monitor_tab.action_group.findChild(QLineEdit, "action_param_edit")
+            if not action_param_edit:
+                logger.error("无法找到动作参数输入框")
+                return
+                
+            action_param = action_param_edit.text().strip()
+            
+            # 验证参数
+            if not action_param and action_type not in ['mousemove', 'mouseclick']:
+                QMessageBox.warning(
+                    self.monitor_tab,
+                    "参数错误",
+                    "请输入动作参数"
+                )
+                return
+            
+            # 获取触发条件
+            trigger_combo = self.monitor_tab.action_group.findChild(QComboBox, "trigger_combo")
+            if not trigger_combo:
+                logger.error("无法找到触发条件下拉框")
+                return
+                
+            trigger_condition = trigger_combo.currentText()
+            
+            # 获取触发延迟
+            delay_spin = self.monitor_tab.action_group.findChild(QSpinBox, "delay_spin")
+            if not delay_spin:
+                logger.error("无法找到延迟设置框")
+                return
+                
+            trigger_delay = delay_spin.value()
+            
+            # 创建动作参数字典
+            params = {
+                'trigger_condition': trigger_condition,
+                'trigger_delay': trigger_delay
+            }
+            
+            # 处理鼠标点击类型的特殊参数
+            if action_type == 'mouseclick' and hasattr(self.monitor_tab, 'mouse_settings_group'):
+                # 获取鼠标坐标
+                x_spin = self.monitor_tab.findChild(QSpinBox, "mouse_x_spin")
+                y_spin = self.monitor_tab.findChild(QSpinBox, "mouse_y_spin")
+                if x_spin and y_spin:
+                    params['x'] = x_spin.value()
+                    params['y'] = y_spin.value()
+                
+                # 获取点击设置
+                click_count_spin = self.monitor_tab.findChild(QSpinBox, "click_count_spin")
+                if click_count_spin:
+                    params['click_count'] = click_count_spin.value()
+                
+                click_interval_spin = self.monitor_tab.findChild(QSpinBox, "click_interval_spin")
+                if click_interval_spin:
+                    params['click_interval'] = click_interval_spin.value()
                 
                 # 获取鼠标按钮
-                button_text = self.monitor_tab.mouse_button_combo.currentText()
-                button_map = {"左键": "left", "右键": "right", "中键": "middle"}
-                button = button_map.get(button_text, "left")
-                
-                # 创建动作参数
-                action_params = {
-                    'mouse_type': Action.MOUSE_CLICK,
-                    'x': mouse_x,
-                    'y': mouse_y,
-                    'clicks': click_count,
-                    'interval': click_interval,
-                    'button': button
-                }
-                
-                # 创建动作
-                action = Action(
-                    action_id=None,
-                    action_type=Action.TYPE_MOUSE,
-                    params=action_params,
-                    name=f"鼠标点击 - ({mouse_x},{mouse_y}) {button_text} {click_count}次"
-                )
-                
-                # 添加动作到执行器
-                monitor_engine = main_window.monitor_engine
-                if monitor_engine and hasattr(monitor_engine, 'action_executor'):
-                    monitor_engine.action_executor.add_action(action)
-                    logger.info(f"鼠标点击动作已添加: ({mouse_x},{mouse_y}) {button_text} {click_count}次")
-                    
-                    # 保存配置
-                    monitor_engine.save_config()
-                    
-                    # 保存当前标签页配置
-                    self.save_monitor_tab_config()
-                    
-                    QMessageBox.information(
-                        self.monitor_tab, 
-                        "成功", 
-                        f"鼠标点击动作已添加: ({mouse_x},{mouse_y}) {button_text} {click_count}次"
-                    )
-            else:
-                # 获取动作参数
-                action_param_edit = action_group.findChild(QLineEdit, "action_param_edit")
-                if not action_param_edit:
-                    return
-                action_params = action_param_edit.text().strip()
-                
-                # 创建动作
-                action = Action(
-                    action_id=None,  # 自动生成ID
-                    action_type=self.get_action_type_from_text(action_type),
-                    params={
-                        'trigger': trigger_condition,
-                        'delay': delay,
-                        'content': action_params
-                    },
-                    name=f"{action_type} - {action_params[:20]}"
-                )
-                
-                # 添加动作到执行器
-                monitor_engine = main_window.monitor_engine
-                if monitor_engine and hasattr(monitor_engine, 'action_executor'):
-                    monitor_engine.action_executor.add_action(action)
-                    logger.info(f"动作已添加: {action_type}:{action_params}")
-                    
-                    # 保存配置
-                    monitor_engine.save_config()
-                    
-                    # 保存当前标签页配置
-                    self.save_monitor_tab_config()
-                    
-                    # 清空动作参数输入框
-                    action_param_edit.clear()
-                    
-                    QMessageBox.information(
-                        self.monitor_tab, 
-                        "成功", 
-                        f"动作已添加: {action_type}"
-                    )
+                button_combo = self.monitor_tab.findChild(QComboBox, "mouse_button_combo")
+                if button_combo:
+                    button_text = button_combo.currentText()
+                    if button_text == "左键":
+                        params['button'] = 'left'
+                    elif button_text == "右键":
+                        params['button'] = 'right'
+                    elif button_text == "中键":
+                        params['button'] = 'middle'
+            
+            # 创建动作对象
+            from core.action_executor import Action
+            action = Action(
+                action_type=action_type,
+                content=action_param,
+                params=params
+            )
+            
+            # 添加动作到执行器
+            action_executor.add_action(action)
+            
+            # 更新UI，显示已添加的动作
+            if not hasattr(self, 'action_list'):
+                # 创建动作列表
+                self.action_list = []
+            
+            self.action_list.append(action)
+            
+            # 保存配置
+            self.save_monitor_tab_config()
+            
+            # 通知用户
+            QMessageBox.information(
+                self.monitor_tab,
+                "成功",
+                f"动作已添加: {action_type_text}\n参数: {action_param}"
+            )
+            
+            logger.info(f"已添加动作: {action.id} - {action_type_text}")
             
         except Exception as e:
             logger.error(f"添加动作失败: {e}")
@@ -702,16 +714,26 @@ class MonitorController(QObject):
             )
     
     def get_action_type_from_text(self, type_text: str) -> str:
-        """根据动作类型文本获取动作类型"""
+        """将动作类型文本转换为内部类型
+        
+        Args:
+            type_text: 动作类型文本
+            
+        Returns:
+            str: 内部动作类型
+        """
         from core.action_executor import Action
-        type_map = {
+        
+        # 动作类型映射
+        action_type_map = {
             "发送通知": Action.TYPE_NOTIFICATION,
             "执行按键": Action.TYPE_KEYBOARD,
-            "点击鼠标": Action.TYPE_MOUSE,
+            "点击鼠标": "mouseclick",  # 特殊类型，会被转换为 Action.TYPE_MOUSE
             "运行脚本": Action.TYPE_SCRIPT,
-            "自定义动作": "custom"
+            "自定义动作": Action.TYPE_CUSTOM
         }
-        return type_map.get(type_text, Action.TYPE_NOTIFICATION)
+        
+        return action_type_map.get(type_text, Action.TYPE_NOTIFICATION)
     
     def save_monitor_tab_config(self):
         """保存监控标签页配置"""
@@ -730,16 +752,61 @@ class MonitorController(QObject):
             # 获取当前标签页配置
             config = config_controller.get_config_from_tab("监控设置", self.monitor_tab)
             
-            # 获取配置面板
-            config_panel = main_window.config_panel
+            # 确保触发动作配置正确保存
+            action_group = self.monitor_tab.action_group
             
-            # 保存配置
-            config_panel.configs[config_panel.current_config] = config
+            # 获取触发条件
+            trigger_combo = action_group.findChild(QComboBox, "trigger_combo")
+            if trigger_combo:
+                config['monitor']['trigger_condition'] = trigger_combo.currentText()
             
-            logger.info("监控标签页配置已保存")
+            # 获取延迟
+            delay_spin = action_group.findChild(QSpinBox, "delay_spin")
+            if delay_spin:
+                config['monitor']['trigger_delay'] = delay_spin.value()
+            
+            # 获取执行动作
+            action_combo = action_group.findChild(QComboBox, "action_combo")
+            if action_combo:
+                config['monitor']['action_type'] = action_combo.currentText()
+                
+            # 获取动作参数
+            action_param_edit = action_group.findChild(QLineEdit, "action_param_edit")
+            if action_param_edit:
+                config['monitor']['action_param'] = action_param_edit.text()
+                
+            # 如果是鼠标点击类型，获取鼠标设置
+            if hasattr(self.monitor_tab, 'mouse_settings_group') and self.monitor_tab.mouse_settings_group.isVisible():
+                mouse_settings = {}
+                
+                # 获取坐标
+                if hasattr(self.monitor_tab, 'mouse_x_spin') and hasattr(self.monitor_tab, 'mouse_y_spin'):
+                    mouse_settings['x'] = self.monitor_tab.mouse_x_spin.value()
+                    mouse_settings['y'] = self.monitor_tab.mouse_y_spin.value()
+                
+                # 获取点击次数和间隔
+                if hasattr(self.monitor_tab, 'click_count_spin'):
+                    mouse_settings['click_count'] = self.monitor_tab.click_count_spin.value()
+                
+                if hasattr(self.monitor_tab, 'click_interval_spin'):
+                    mouse_settings['click_interval'] = self.monitor_tab.click_interval_spin.value()
+                
+                # 获取鼠标按钮
+                if hasattr(self.monitor_tab, 'mouse_button_combo'):
+                    mouse_settings['button'] = self.monitor_tab.mouse_button_combo.currentText()
+                
+                config['monitor']['mouse_settings'] = mouse_settings
+            
+            # 保存配置到配置管理器
+            current_config_name = config_controller.config_manager.current_config
+            config_controller.config_manager.save_config(current_config_name, config)
+            
+            logger.info(f"监控标签页配置已保存到 {current_config_name}")
             
         except Exception as e:
             logger.error(f"保存监控标签页配置失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def load_monitor_tab_config(self):
         """加载监控标签页配置"""
@@ -757,6 +824,67 @@ class MonitorController(QObject):
             
             # 应用配置到标签页
             config_controller.apply_config_to_tab("监控设置", self.monitor_tab)
+            
+            # 加载触发动作相关配置
+            action_group = self.monitor_tab.action_group
+            
+            # 获取当前配置
+            current_config = config_controller.config_manager.get_config()
+            if 'monitor' not in current_config:
+                logger.warning("配置中没有monitor部分")
+                return
+                
+            monitor_config = current_config.get('monitor', {})
+            
+            # 设置触发条件
+            trigger_combo = action_group.findChild(QComboBox, "trigger_combo")
+            if trigger_combo and 'trigger_condition' in monitor_config:
+                trigger_combo.setCurrentText(monitor_config['trigger_condition'])
+            
+            # 设置延迟
+            delay_spin = action_group.findChild(QSpinBox, "delay_spin")
+            if delay_spin and 'trigger_delay' in monitor_config:
+                delay_spin.setValue(monitor_config['trigger_delay'])
+            
+            # 设置执行动作
+            action_combo = action_group.findChild(QComboBox, "action_combo")
+            if action_combo and 'action_type' in monitor_config:
+                action_type = monitor_config['action_type']
+                action_combo.setCurrentText(action_type)
+                
+                # 如果是鼠标点击类型，显示鼠标设置组
+                if action_type == "点击鼠标" and hasattr(self.monitor_tab, 'mouse_settings_group'):
+                    self.monitor_tab.mouse_settings_group.setVisible(True)
+                    
+                    # 加载鼠标设置
+                    mouse_settings = monitor_config.get('mouse_settings', {})
+                    
+                    # 设置坐标
+                    if hasattr(self.monitor_tab, 'mouse_x_spin') and 'x' in mouse_settings:
+                        self.monitor_tab.mouse_x_spin.setValue(mouse_settings['x'])
+                    
+                    if hasattr(self.monitor_tab, 'mouse_y_spin') and 'y' in mouse_settings:
+                        self.monitor_tab.mouse_y_spin.setValue(mouse_settings['y'])
+                    
+                    # 设置点击次数和间隔
+                    if hasattr(self.monitor_tab, 'click_count_spin') and 'click_count' in mouse_settings:
+                        self.monitor_tab.click_count_spin.setValue(mouse_settings['click_count'])
+                    
+                    if hasattr(self.monitor_tab, 'click_interval_spin') and 'click_interval' in mouse_settings:
+                        self.monitor_tab.click_interval_spin.setValue(mouse_settings['click_interval'])
+                    
+                    # 设置鼠标按钮
+                    if hasattr(self.monitor_tab, 'mouse_button_combo') and 'button' in mouse_settings:
+                        self.monitor_tab.mouse_button_combo.setCurrentText(mouse_settings['button'])
+                else:
+                    # 其他类型，隐藏鼠标设置组
+                    if hasattr(self.monitor_tab, 'mouse_settings_group'):
+                        self.monitor_tab.mouse_settings_group.setVisible(False)
+            
+            # 设置动作参数
+            action_param_edit = action_group.findChild(QLineEdit, "action_param_edit")
+            if action_param_edit and 'action_param' in monitor_config:
+                action_param_edit.setText(monitor_config['action_param'])
             
             # 更新规则表格
             QTimer.singleShot(100, self.update_rule_table)
@@ -788,14 +916,37 @@ class MonitorController(QObject):
                     'match_mode': match_mode
                 }
                 
+                # 获取触发条件、延迟和执行动作
+                action_group = self.monitor_tab.action_group
+                
+                # 获取触发条件
+                trigger_combo = action_group.findChild(QComboBox, "trigger_combo")
+                if trigger_combo:
+                    monitor_config['trigger_condition'] = trigger_combo.currentText()
+                
+                # 获取延迟
+                delay_spin = action_group.findChild(QSpinBox, "delay_spin")
+                if delay_spin:
+                    monitor_config['trigger_delay'] = delay_spin.value()
+                
+                # 获取执行动作
+                action_combo = action_group.findChild(QComboBox, "action_combo")
+                if action_combo:
+                    monitor_config['action_type'] = action_combo.currentText()
+                
                 # 应用到所有监控区域
                 for area in main_window.monitor_engine.get_all_areas().values():
                     area.config.update(monitor_config)
                 
-                logger.info(f"已更新监控配置: 间隔={interval}秒, 匹配模式={match_mode}")
+                # 保存监控引擎配置
+                main_window.monitor_engine.save_config()
                 
+                logger.info(f"已更新监控配置: 间隔={interval}秒, 匹配模式={match_mode}, 触发条件={monitor_config.get('trigger_condition', '')}, 延迟={monitor_config.get('trigger_delay', 0)}秒")
+            
         except Exception as e:
             logger.error(f"更新监控配置失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     @pyqtSlot(str)
     def on_custom_expression_changed(self, expression):
@@ -893,196 +1044,200 @@ class MonitorController(QObject):
 
     @pyqtSlot(str)
     def on_action_type_changed(self, action_type):
-        """动作类型变化事件"""
+        """动作类型变化回调"""
         try:
-            # 根据动作类型显示/隐藏相应的设置区域
-            if action_type == "点击鼠标":
-                # 显示鼠标点击设置区域
-                self.monitor_tab.mouse_settings_group.setVisible(True)
-                # 隐藏通用动作参数编辑框
-                self.monitor_tab.action_param_edit.setVisible(False)
-            else:
-                # 隐藏鼠标点击设置区域
-                self.monitor_tab.mouse_settings_group.setVisible(False)
-                # 显示通用动作参数编辑框
-                self.monitor_tab.action_param_edit.setVisible(True)
+            # 处理鼠标点击设置组的显示/隐藏
+            if hasattr(self.monitor_tab, 'mouse_settings_group'):
+                if action_type == "点击鼠标":
+                    self.monitor_tab.mouse_settings_group.setVisible(True)
+                else:
+                    self.monitor_tab.mouse_settings_group.setVisible(False)
             
-            logger.info(f"动作类型已变更: {action_type}")
+            # 更新动作参数提示文本
+            action_param_edit = self.monitor_tab.action_group.findChild(QLineEdit, "action_param_edit")
+            if action_param_edit:
+                if action_type == "发送通知":
+                    action_param_edit.setPlaceholderText("输入通知消息内容...")
+                    action_param_edit.setEnabled(True)
+                elif action_type == "执行按键":
+                    action_param_edit.setPlaceholderText("输入按键，例如: ctrl+c, enter, space...")
+                    action_param_edit.setEnabled(True)
+                elif action_type == "点击鼠标":
+                    action_param_edit.setPlaceholderText("可选：输入点击后的确认提示")
+                    action_param_edit.setEnabled(True)
+                elif action_type == "运行脚本":
+                    action_param_edit.setPlaceholderText("输入脚本路径或Python代码...")
+                    action_param_edit.setEnabled(True)
+                elif action_type == "自定义动作":
+                    action_param_edit.setPlaceholderText("输入自定义动作数据，格式为JSON...")
+                    action_param_edit.setEnabled(True)
+                else:
+                    action_param_edit.setPlaceholderText("输入动作参数...")
+                    action_param_edit.setEnabled(True)
                 
+                # 清空当前参数
+                action_param_edit.clear()
+            
+            # 保存配置
+            self.save_monitor_tab_config()
+            
         except Exception as e:
-            logger.error(f"动作类型变更处理失败: {e}")
-    
+            logger.error(f"动作类型变化处理失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
     @pyqtSlot()
     def on_select_mouse_pos(self):
-        """选择坐标按钮点击事件"""
+        """选择鼠标位置按钮点击事件"""
         try:
-            from PyQt5.QtCore import Qt, QTimer, QPoint
-            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox
-            import pyautogui
-            import time
+            # 创建选择坐标对话框
+            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+            from PyQt5.QtCore import Qt, QTimer
             
-            # 获取主窗口
-            main_window = self.monitor_tab.window()
-            
-            # 创建一个自定义对话框
-            class ClickCaptureDialog(QDialog):
-                def __init__(self, parent=None, only_text_areas=False):
-                    super().__init__(parent, Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool)
+            class MousePosDialog(QDialog):
+                def __init__(self, parent=None):
+                    super().__init__(parent)
                     self.setWindowTitle("选择鼠标位置")
-                    self.setStyleSheet("background-color: rgba(0, 0, 0, 150); color: white;")
-                    self.setFixedSize(300, 130)
+                    self.setFixedSize(300, 150)
+                    self.setWindowFlags(Qt.WindowStaysOnTopHint)
                     
-                    # 创建布局
                     self.layout = QVBoxLayout(self)
                     
-                    # 添加说明标签
-                    self.label = QLabel("请移动到目标位置，然后点击鼠标左键确认位置。\n按ESC键取消。")
-                    self.label.setAlignment(Qt.AlignCenter)
-                    self.label.setStyleSheet("font-size: 14px;")
-                    self.layout.addWidget(self.label)
+                    # 提示文本
+                    self.info_label = QLabel("请将鼠标移动到目标位置，然后按下鼠标左键进行选择。\n按ESC取消。")
+                    self.info_label.setAlignment(Qt.AlignCenter)
+                    self.layout.addWidget(self.info_label)
                     
-                    # 创建一个标签显示当前坐标
-                    self.coords_label = QLabel("当前坐标: (0, 0)")
-                    self.coords_label.setAlignment(Qt.AlignCenter)
-                    self.coords_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-                    self.layout.addWidget(self.coords_label)
+                    # 坐标显示
+                    self.pos_label = QLabel("X: 0, Y: 0")
+                    self.pos_label.setAlignment(Qt.AlignCenter)
+                    self.layout.addWidget(self.pos_label)
                     
-                    # 添加限制文本区域选项
-                    self.option_layout = QHBoxLayout()
-                    self.text_areas_only_check = QCheckBox("仅限文本区域")
-                    self.text_areas_only_check.setChecked(only_text_areas)
-                    self.text_areas_only_check.setStyleSheet("color: white;")
-                    self.option_layout.addStretch()
-                    self.option_layout.addWidget(self.text_areas_only_check)
-                    self.option_layout.addStretch()
-                    self.layout.addLayout(self.option_layout)
+                    # 按钮区域
+                    self.button_layout = QHBoxLayout()
                     
-                    # 设置当前鼠标位置
+                    self.cancel_btn = QPushButton("取消")
+                    self.cancel_btn.clicked.connect(self.reject)
+                    self.button_layout.addWidget(self.cancel_btn)
+                    
+                    self.select_btn = QPushButton("选择当前位置")
+                    self.select_btn.clicked.connect(self.accept)
+                    self.button_layout.addWidget(self.select_btn)
+                    
+                    self.layout.addLayout(self.button_layout)
+                    
+                    # 当前坐标
                     self.current_pos = (0, 0)
                     
-                    # 保存文本区域
-                    self.text_areas = []
-                    
-                    # 当前是否在有效区域
-                    self.is_valid_area = False
-                    
-                    # 安装事件过滤器以捕获全局鼠标事件
-                    self.installEventFilter(self)
+                    # 更新坐标的定时器
+                    self.timer = QTimer(self)
+                    self.timer.timeout.connect(self.update_mouse_pos)
+                    self.timer.start(100)  # 每100毫秒更新一次
                 
-                def updateCoords(self):
-                    """更新坐标显示"""
+                def update_mouse_pos(self):
+                    """更新鼠标位置"""
+                    import pyautogui
                     try:
-                        # 获取当前鼠标位置
-                        self.current_pos = pyautogui.position()
-                        x, y = self.current_pos
-                        
-                        # 检查是否在文本区域内
-                        if self.text_areas_only_check.isChecked():
-                            self.is_valid_area = self.is_in_text_area(x, y)
-                            area_text = "有效区域" if self.is_valid_area else "无效区域"
-                            style = "color: #4CAF50;" if self.is_valid_area else "color: #F44336;"
-                            self.coords_label.setText(f"当前坐标: ({x}, {y}) - {area_text}")
-                            self.coords_label.setStyleSheet(f"font-size: 16px; font-weight: bold; {style}")
-                        else:
-                            self.is_valid_area = True
-                            self.coords_label.setText(f"当前坐标: ({x}, {y})")
-                            self.coords_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-                        
-                        # 更新对话框位置，跟随鼠标
-                        screen_geometry = QApplication.desktop().screenGeometry()
-                        dialog_x = min(x + 20, screen_geometry.width() - self.width())
-                        dialog_y = min(y + 20, screen_geometry.height() - self.height())
-                        self.move(dialog_x, dialog_y)
+                        x, y = pyautogui.position()
+                        self.current_pos = (x, y)
+                        self.pos_label.setText(f"X: {x}, Y: {y}")
                     except Exception as e:
-                        logger.error(f"更新坐标失败: {e}")
+                        self.pos_label.setText(f"错误: {e}")
                 
-                def set_text_areas(self, areas):
-                    """设置文本区域"""
-                    self.text_areas = areas
-                
-                def is_in_text_area(self, x, y):
-                    """检查坐标是否在文本区域内"""
-                    for area in self.text_areas:
-                        if (area['x'] <= x <= area['x'] + area['width'] and 
-                            area['y'] <= y <= area['y'] + area['height']):
-                            return True
-                    return False
-                
-                def eventFilter(self, obj, event):
-                    """事件过滤器，用于捕获全局鼠标事件"""
-                    if event.type() == QEvent.MouseButtonPress:
-                        if event.button() == Qt.LeftButton:
-                            if self.is_valid_area:
-                                self.accept()
-                            return True
-                    elif event.type() == QEvent.KeyPress:
-                        if event.key() == Qt.Key_Escape:
-                            self.reject()
-                            return True
-                    return super().eventFilter(obj, event)
-            
-            # 获取OCR识别到的文本区域
-            text_areas = []
-            if main_window and hasattr(main_window, 'ocr_controller'):
-                # 获取OCR结果
-                ocr_controller = main_window.ocr_controller
-                if hasattr(ocr_controller, 'last_ocr_details') and ocr_controller.last_ocr_details:
-                    if 'boxes' in ocr_controller.last_ocr_details:
-                        text_areas = ocr_controller.last_ocr_details['boxes']
-            
-            # 创建对话框
-            dialog = ClickCaptureDialog(self.monitor_tab)
-            dialog.set_text_areas(text_areas)
-            
-            # 创建并启动更新定时器
-            timer = QTimer(dialog)
-            timer.timeout.connect(dialog.updateCoords)
-            timer.start(50)  # 每50毫秒更新一次
-            
-            # 显示对话框在当前鼠标位置附近
-            cursor_pos = pyautogui.position()
-            dialog.move(cursor_pos[0] + 20, cursor_pos[1] + 20)
+                def keyPressEvent(self, event):
+                    """按键事件处理"""
+                    if event.key() == Qt.Key_Escape:
+                        self.reject()
+                    else:
+                        super().keyPressEvent(event)
             
             # 显示对话框
-            QApplication.setOverrideCursor(Qt.CrossCursor)  # 设置鼠标为十字光标
-            result = dialog.exec_()
-            QApplication.restoreOverrideCursor()  # 恢复鼠标光标
-            
-            # 停止定时器
-            timer.stop()
-            
-            # 处理结果
-            if result == QDialog.Accepted:
+            dialog = MousePosDialog(self.monitor_tab)
+            if dialog.exec_() == QDialog.Accepted:
                 x, y = dialog.current_pos
-                self.monitor_tab.mouse_x_spin.setValue(x)
-                self.monitor_tab.mouse_y_spin.setValue(y)
                 
-                QMessageBox.information(
-                    self.monitor_tab,
-                    "坐标已记录",
-                    f"已记录鼠标位置: ({x}, {y})"
-                )
-            
+                # 设置坐标到鼠标设置组件
+                if hasattr(self.monitor_tab, 'mouse_x_spin') and hasattr(self.monitor_tab, 'mouse_y_spin'):
+                    self.monitor_tab.mouse_x_spin.setValue(x)
+                    self.monitor_tab.mouse_y_spin.setValue(y)
+                    
+                    # 保存配置
+                    self.save_monitor_tab_config()
+                    
+                    # 通知用户
+                    from PyQt5.QtWidgets import QMessageBox
+                    QMessageBox.information(
+                        self.monitor_tab,
+                        "坐标已选择",
+                        f"已选择坐标 X: {x}, Y: {y}"
+                    )
+        
         except Exception as e:
             logger.error(f"选择鼠标位置失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            from PyQt5.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self.monitor_tab,
                 "错误",
                 f"选择鼠标位置失败: {e}"
             )
-    
+
     @pyqtSlot()
     def on_mouse_settings_changed(self):
-        """鼠标点击设置变化事件"""
+        """鼠标设置变化事件"""
         try:
             # 保存配置
             self.save_monitor_tab_config()
             
-            logger.debug("鼠标点击设置已更新")
-                
+            # 获取主窗口
+            main_window = self.monitor_tab.window()
+            if not main_window or not hasattr(main_window, 'monitor_engine'):
+                logger.warning("无法获取监控引擎")
+                return
+            
+            # 获取当前鼠标设置
+            mouse_settings = {}
+            
+            # 获取坐标
+            if hasattr(self.monitor_tab, 'mouse_x_spin') and hasattr(self.monitor_tab, 'mouse_y_spin'):
+                mouse_settings['x'] = self.monitor_tab.mouse_x_spin.value()
+                mouse_settings['y'] = self.monitor_tab.mouse_y_spin.value()
+            
+            # 获取点击次数和间隔
+            if hasattr(self.monitor_tab, 'click_count_spin'):
+                mouse_settings['click_count'] = self.monitor_tab.click_count_spin.value()
+            
+            if hasattr(self.monitor_tab, 'click_interval_spin'):
+                mouse_settings['click_interval'] = self.monitor_tab.click_interval_spin.value()
+            
+            # 获取鼠标按钮
+            if hasattr(self.monitor_tab, 'mouse_button_combo'):
+                button_text = self.monitor_tab.mouse_button_combo.currentText()
+                if button_text == "左键":
+                    mouse_settings['button'] = 'left'
+                elif button_text == "右键":
+                    mouse_settings['button'] = 'right'
+                elif button_text == "中键":
+                    mouse_settings['button'] = 'middle'
+            
+            # 更新监控引擎配置
+            monitor_engine = main_window.monitor_engine
+            
+            # 更新鼠标设置到监控配置
+            current_config = monitor_engine.config.copy()
+            if 'mouse_settings' not in current_config:
+                current_config['mouse_settings'] = {}
+            
+            current_config['mouse_settings'].update(mouse_settings)
+            monitor_engine.set_config(current_config)
+            
+            # 保存引擎配置
+            monitor_engine.save_config()
+            
+            logger.info(f"鼠标设置已更新: X={mouse_settings.get('x')}, Y={mouse_settings.get('y')}, 点击次数={mouse_settings.get('click_count')}, 间隔={mouse_settings.get('click_interval')}毫秒, 按钮={mouse_settings.get('button')}")
+            
         except Exception as e:
-            logger.error(f"更新鼠标点击设置失败: {e}")
+            logger.error(f"更新鼠标设置失败: {e}")
             import traceback
             logger.error(traceback.format_exc())

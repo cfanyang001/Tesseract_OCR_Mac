@@ -27,6 +27,34 @@
       },
       "name": "鼠标点击 - (1854,750) 左键 1次",
       "last_executed": null
+    },
+    "dcfb81a5-dfd7-4bed-b093-9dd755ff09ca": {
+      "id": "dcfb81a5-dfd7-4bed-b093-9dd755ff09ca",
+      "type": "mouse",
+      "params": {
+        "mouse_type": "click",
+        "x": 1820,
+        "y": 709,
+        "clicks": 1,
+        "interval": 1.1,
+        "button": "left"
+      },
+      "name": "鼠标点击 - (1820,709) 左键 1次",
+      "last_executed": null
+    },
+    "0d255490-9a92-4b8b-b867-4da280ef1ccd": {
+      "id": "0d255490-9a92-4b8b-b867-4da280ef1ccd",
+      "type": "mouse",
+      "params": {
+        "mouse_type": "click",
+        "x": 1820,
+        "y": 709,
+        "clicks": 1,
+        "interval": 1.0,
+        "button": "left"
+      },
+      "name": "鼠标点击 - (1820,709) 左键 1次",
+      "last_executed": null
     }
   },
   "sequences": {},

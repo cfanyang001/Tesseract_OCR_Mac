@@ -4,6 +4,7 @@ import subprocess
 import threading
 import pyautogui
 import keyboard
+import sys
 from typing import Dict, Any, List, Callable, Optional, Union
 from datetime import datetime
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -559,62 +560,63 @@ class ActionExecutor(QObject):
         """执行脚本动作
         
         Args:
-            action: 动作对象
+            action: 脚本动作对象
             
         Returns:
             str: 执行结果
         """
-        # 检查是否允许执行命令
-        if not self.config['allow_commands']:
-            raise PermissionError("禁止执行脚本，请在配置中启用")
-        
-        # 获取脚本内容和类型
-        script = action.params.get('script', '')
-        script_type = action.params.get('script_type', 'python')
-        
-        # 检查安全模式
-        if self.config['safe_mode']:
-            # 禁止执行危险操作
-            dangerous_modules = ['os.system', 'subprocess.', 'shutil.rmtree', 'remove']
-            if any(module in script for module in dangerous_modules):
-                raise PermissionError(f"脚本包含危险操作，禁止执行")
-        
-        # 创建临时脚本文件
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=f'.{script_type}', delete=False) as temp:
-            temp_path = temp.name
-            temp.write(script.encode('utf-8'))
-        
         try:
-            # 根据脚本类型执行
-            if script_type == 'python':
-                command = ['python', temp_path]
-            elif script_type == 'bash' or script_type == 'sh':
-                command = ['bash', temp_path]
+            script_content = action.params.get('content')
+            if not script_content:
+                return "脚本内容为空"
+            
+            # 检查是否是路径
+            is_file = action.params.get('is_file', False)
+            if is_file:
+                # 作为文件路径处理
+                if not os.path.exists(script_content):
+                    return f"脚本文件不存在: {script_content}"
+                
+                # 检查文件后缀
+                if not script_content.endswith('.py'):
+                    return f"不支持的脚本类型: {script_content}"
+                
+                # 执行脚本文件
+                try:
+                    result = subprocess.check_output(
+                        [sys.executable, script_content],
+                        stderr=subprocess.STDOUT,
+                        timeout=self.config.get('command_timeout', 10.0),
+                        universal_newlines=True
+                    )
+                    return f"脚本执行成功: {result}"
+                except subprocess.CalledProcessError as e:
+                    return f"脚本执行失败: {e.output}"
+                except subprocess.TimeoutExpired:
+                    return "脚本执行超时"
             else:
-                raise ValueError(f"不支持的脚本类型: {script_type}")
-            
-            # 执行脚本
-            timeout = action.params.get('timeout', self.config['command_timeout'])
-            result = subprocess.run(
-                command, 
-                capture_output=True, 
-                text=True,
-                timeout=timeout
-            )
-            
-            # 检查结果
-            if result.returncode != 0:
-                logger.warning(f"脚本执行返回非零值: {result.returncode}, 错误: {result.stderr}")
-            
-            return f"脚本执行: {script_type}, 返回码: {result.returncode}, 输出: {result.stdout[:200]}"
-            
-        finally:
-            # 删除临时文件
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
+                # 作为脚本内容处理
+                try:
+                    # 创建临时执行环境
+                    local_vars = {}
+                    # 增加访问动作执行器的能力
+                    local_vars['executor'] = self
+                    local_vars['pyautogui'] = pyautogui
+                    local_vars['keyboard'] = keyboard
+                    local_vars['time'] = time
+                    local_vars['os'] = os
+                    
+                    # 执行脚本
+                    exec(script_content, {}, local_vars)
+                    
+                    # 获取结果
+                    result = local_vars.get('result', '脚本执行成功')
+                    return str(result)
+                except Exception as e:
+                    return f"脚本执行异常: {str(e)}"
+        except Exception as e:
+            logger.error(f"执行脚本动作异常: {e}")
+            return f"执行脚本动作异常: {str(e)}"
     
     def _execute_screenshot_action(self, action: Action) -> str:
         """执行截图动作

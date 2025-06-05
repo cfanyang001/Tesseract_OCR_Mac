@@ -1,5 +1,5 @@
 from PyQt5.QtCore import QObject, pyqtSlot, Qt
-from PyQt5.QtWidgets import QComboBox, QLineEdit
+from PyQt5.QtWidgets import QComboBox, QLineEdit, QSpinBox
 from loguru import logger
 
 from config.config_manager import ConfigManager
@@ -366,7 +366,7 @@ class ConfigController(QObject):
                         trigger_combo.setCurrentIndex(index)
                 
                 # 设置延迟
-                delay_spin = action_group.findChild(QComboBox, "delay_spin")
+                delay_spin = action_group.findChild(QSpinBox, "delay_spin")
                 if delay_spin and 'trigger_delay' in config:
                     delay_spin.setValue(int(config['trigger_delay']))
                 
@@ -586,7 +586,7 @@ class ConfigController(QObject):
                     config['trigger_condition'] = trigger_combo.currentText()
                 
                 # 获取延迟
-                delay_spin = action_group.findChild(QComboBox, "delay_spin")
+                delay_spin = action_group.findChild(QSpinBox, "delay_spin")
                 if delay_spin:
                     config['trigger_delay'] = delay_spin.value()
                 

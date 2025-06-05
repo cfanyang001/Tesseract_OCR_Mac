@@ -150,14 +150,10 @@ class OCRTab(QWidget):
         autocorrect_check.setObjectName("autocorrect_check")
         ocr_layout.addWidget(autocorrect_check)
         
-        # 刷新频率
-        refresh_layout = QHBoxLayout()
-        refresh_layout.addWidget(QLabel("刷新频率:"))
-        refresh_combo = QComboBox()
-        refresh_combo.setObjectName("refresh_combo")
-        refresh_combo.addItems(["低 (1秒)", "中 (0.5秒)", "高 (0.2秒)", "自定义"])
-        refresh_layout.addWidget(refresh_combo)
-        ocr_layout.addLayout(refresh_layout)
+        # 提示信息
+        tip_label = QLabel("预览刷新频率与监控设置中的间隔同步")
+        tip_label.setStyleSheet("color: gray; font-style: italic;")
+        ocr_layout.addWidget(tip_label)
         
         layout.addWidget(ocr_group)
         
