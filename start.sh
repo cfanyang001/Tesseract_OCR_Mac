@@ -27,7 +27,9 @@ fi
 
 # 检查Python版本
 PY_VER=$($PYTHON_CMD -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-if (( $(echo "$PY_VER < 3.8" | bc -l) )); then
+# 使用Python自身比较版本，避免依赖bc命令
+PY_VER_CHECK=$($PYTHON_CMD -c "import sys; print(sys.version_info >= (3, 8))")
+if [ "$PY_VER_CHECK" = "False" ]; then
     echo -e "  ${YELLOW}⚠ Python版本过低: $PY_VER，推荐使用Python 3.8+${NC}"
 else
     echo -e "  ${GREEN}✓ Python版本符合要求: $PY_VER${NC}"
@@ -128,9 +130,9 @@ fi
 
 # 检查依赖
 echo -e "${GREEN}[5/5] 检查依赖项...${NC}"
-$PYTHON_CMD -c "import PyQt5" 2>/dev/null
+$PYTHON_CMD -c "import PyQt6" 2>/dev/null
 if [ $? -ne 0 ]; then
-    echo -e "  ${YELLOW}⚠ 缺少PyQt5依赖${NC}"
+    echo -e "  ${YELLOW}⚠ 缺少PyQt6依赖${NC}"
     echo -e "  ${YELLOW}是否安装依赖? (y/n)${NC}"
     read -r answer
     if [[ "$answer" = "y" || "$answer" = "Y" ]]; then
@@ -144,8 +146,17 @@ if [ $? -ne 0 ]; then
         fi
     fi
 else
-    echo -e "  ${GREEN}✓ PyQt5依赖已安装${NC}"
+    echo -e "  ${GREEN}✓ PyQt6依赖已安装${NC}"
 fi
+
+# 检查main.py文件是否存在
+if [ ! -f "main.py" ]; then
+    echo -e "${RED}错误：main.py文件不存在，无法启动程序${NC}"
+    exit 1
+fi
+
+# 确保main.py有执行权限
+chmod +x main.py
 
 echo -e "${BLUE}=======================================${NC}"
 echo -e "${GREEN}所有检查完成，正在启动应用程序...${NC}"

@@ -1,6 +1,6 @@
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QShortcut
 from PyQt5.QtCore import Qt, QObject, pyqtSignal
-from PyQt5.QtGui import QKeySequence, QShortcut
+from PyQt5.QtGui import QKeySequence
 
 import platform
 from typing import Dict, Any, List, Callable, Optional, Tuple
