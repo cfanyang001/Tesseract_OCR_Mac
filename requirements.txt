@@ -5,22 +5,26 @@ PyQt5-sip==12.12.2
 
 # OCR
 pytesseract==0.3.10
-Pillow==10.0.0
+Pillow==10.1.0
 
 # 图像处理
-opencv-python==4.8.0.74
+opencv-python==4.8.1.78
 numpy==1.24.3
 
 # 系统交互
 pyautogui==0.9.54
 pynput==1.7.6
 keyboard==0.13.5
+mouse==0.7.1
 
 # 工具库
 python-dotenv==1.0.0
-loguru==0.7.0
-python-Levenshtein==0.23.0
+loguru==0.7.2
+python-Levenshtein==0.22.0
 importlib-metadata==6.8.0
+scikit-image==0.21.0
+requests==2.31.0
+psutil==5.9.5
 
 # 测试
 pytest==7.4.0
