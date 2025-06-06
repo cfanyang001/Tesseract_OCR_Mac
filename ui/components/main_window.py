@@ -9,6 +9,7 @@ from ui.components.tabs.ocr_tab import OCRTab
 from ui.components.tabs.monitor_tab import MonitorTab
 from ui.components.tabs.task_tab import TaskTab
 from ui.components.tabs.logs_tab import LogsTab
+from ui.components.tabs.action_tab import ActionTab
 from ui.components.status_bar import StatusBar
 from ui.components.config_panel import ConfigPanel
 
@@ -54,11 +55,13 @@ class MainWindow(QMainWindow):
         self.monitor_tab = MonitorTab()
         self.task_tab = TaskTab()
         self.logs_tab = LogsTab()
+        self.action_tab = ActionTab()
         
         # 添加标签页到标签页控件
         self.tabs.addTab(self.ocr_tab, "OCR设置")
         self.tabs.addTab(self.monitor_tab, "监控设置")
         self.tabs.addTab(self.task_tab, "任务管理")
+        self.tabs.addTab(self.action_tab, "智能点击")
         self.tabs.addTab(self.logs_tab, "日志")
         
         # 将标签页控件添加到布局
@@ -133,6 +136,12 @@ class MainWindow(QMainWindow):
             self.task_controller = TaskController(self.task_tab, task_manager, monitor_engine)
             logger.info("任务控制器初始化成功")
             
+            # 动作控制器
+            from ui.controllers.tabs.action_controller import ActionController
+            
+            self.action_controller = ActionController(self.action_tab)
+            logger.info("动作控制器初始化成功")
+            
             # 日志控制器
             from ui.controllers.tabs.logs_controller import LogsController
             from ui.models.log_model import LogModel
@@ -156,6 +165,7 @@ class MainWindow(QMainWindow):
             self.config_controller.register_tab("OCR设置", self.ocr_tab)
             self.config_controller.register_tab("监控设置", self.monitor_tab)
             self.config_controller.register_tab("任务管理", self.task_tab)
+            self.config_controller.register_tab("智能点击", self.action_tab)
             self.config_controller.register_tab("日志", self.logs_tab)
             logger.info("所有标签页已注册到配置控制器")
         except Exception as e:
@@ -316,38 +326,20 @@ class MainWindow(QMainWindow):
     def connect_controllers(self):
         """连接控制器之间的信号"""
         try:
-            # 注册所有标签页到配置控制器
-            self.register_tabs_to_config_controller()
+            # 连接日志信号
+            self.ocr_controller.log_message.connect(self.logs_controller.add_log)
+            self.monitor_controller.log_message.connect(self.logs_controller.add_log)
+            self.task_controller.log_message.connect(self.logs_controller.add_log)
+            self.action_controller.log_message.connect(self.logs_controller.add_log)
             
-            # 连接监控引擎到任务管理器
-            if hasattr(self, 'monitor_controller') and hasattr(self, 'task_controller'):
-                monitor_engine = self.monitor_controller.monitor_engine
-                task_manager = self.task_controller.task_manager
-                
-                # 设置任务管理器的监控引擎
-                if task_manager and monitor_engine:
-                    task_manager.set_monitor_engine(monitor_engine)
-                    logger.info("已连接监控引擎到任务管理器")
+            # 连接配置变更信号
+            self.config_controller.config_changed.connect(self.ocr_controller.apply_config)
+            self.config_controller.config_changed.connect(self.monitor_controller.apply_config)
+            self.config_controller.config_changed.connect(self.task_controller.apply_config)
+            self.config_controller.config_changed.connect(self.action_controller.apply_config)
             
-            # 连接日志模型到其他控制器
-            if hasattr(self, 'logs_controller') and hasattr(self.logs_controller, 'log_model'):
-                log_model = self.logs_controller.log_model
-                
-                # 连接OCR控制器的日志
-                if hasattr(self, 'ocr_controller'):
-                    self.ocr_controller.set_log_model(log_model)
-                
-                # 连接监控控制器的日志
-                if hasattr(self, 'monitor_controller'):
-                    self.monitor_controller.set_log_model(log_model)
-                
-                # 连接任务控制器的日志
-                if hasattr(self, 'task_controller'):
-                    self.task_controller.set_log_model(log_model)
-                
-                logger.info("已连接日志模型到所有控制器")
-        
+            logger.info("控制器信号连接成功")
         except Exception as e:
-            logger.error(f"连接控制器失败: {e}")
+            logger.error(f"连接控制器信号失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
