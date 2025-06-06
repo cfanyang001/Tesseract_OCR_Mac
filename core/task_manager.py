@@ -4,6 +4,7 @@ import time
 from typing import Dict, List, Any, Optional, Callable, Tuple
 from PyQt5.QtCore import QObject, pyqtSignal
 from datetime import datetime
+import os
 
 from core.task_scheduler import TaskScheduler, Task
 from core.monitor_engine import MonitorEngine
@@ -11,14 +12,14 @@ from loguru import logger
 
 
 class TaskInfo:
-    """任务信息类，用于存储任务的状态信息"""
+    """任务信息类，存储任务的详细信息"""
     
     # 任务状态
-    STATUS_PENDING = 'pending'     # 等待中
-    STATUS_RUNNING = 'running'     # 运行中
-    STATUS_COMPLETED = 'completed' # 已完成
-    STATUS_FAILED = 'failed'       # 失败
-    STATUS_STOPPED = 'stopped'     # 已停止
+    STATUS_PENDING = 'pending'    # 等待中
+    STATUS_RUNNING = 'running'    # 运行中
+    STATUS_COMPLETED = 'completed'  # 已完成
+    STATUS_FAILED = 'failed'      # 失败
+    STATUS_STOPPED = 'stopped'    # 已停止
     
     def __init__(self, task_id: str, name: str = '', description: str = ''):
         """初始化任务信息
@@ -31,78 +32,32 @@ class TaskInfo:
         self.id = task_id
         self.name = name or f"任务 {task_id[:8]}"
         self.description = description
+        
+        # 任务状态
         self.status = self.STATUS_PENDING
+        self.progress = 0.0  # 进度 (0.0-1.0)
+        self.message = ""    # 状态消息
+        
+        # 执行时间
+        self.create_time = datetime.now()
         self.start_time = None
         self.end_time = None
-        self.progress = 0.0  # 进度 (0.0-1.0)
-        self.result = None   # 任务结果
-        self.error = None    # 错误信息
-        self.logs = []       # 日志记录
-        self.metadata = {}   # 元数据
-        self.last_run_time = None  # 上次运行时间
-    
-    def start(self):
-        """标记任务开始"""
-        self.status = self.STATUS_RUNNING
-        self.start_time = datetime.now()
-        self.last_run_time = self.start_time
-        self.add_log("任务开始")
-    
-    def complete(self, result: Any = None):
-        """标记任务完成"""
-        self.status = self.STATUS_COMPLETED
-        self.end_time = datetime.now()
-        self.result = result
-        self.progress = 1.0
-        self.add_log(f"任务完成: {result}")
-    
-    def fail(self, error: str):
-        """标记任务失败"""
-        self.status = self.STATUS_FAILED
-        self.end_time = datetime.now()
-        self.error = error
-        self.add_log(f"任务失败: {error}")
-    
-    def stop(self):
-        """标记任务停止"""
-        self.status = self.STATUS_STOPPED
-        self.end_time = datetime.now()
-        self.add_log("任务停止")
-    
-    def update_progress(self, progress: float, message: str = None):
-        """更新任务进度
+        self.last_run_time = None
         
-        Args:
-            progress: 进度值 (0.0-1.0)
-            message: 进度消息
-        """
-        self.progress = max(0.0, min(1.0, progress))
-        if message:
-            self.add_log(message)
-    
-    def add_log(self, message: str):
-        """添加日志记录
+        # 执行结果
+        self.result = None
+        self.error = None
         
-        Args:
-            message: 日志消息
-        """
-        log_entry = {
-            'time': datetime.now(),
-            'message': message
+        # 配置
+        self.config = {
+            'auto_restart': False,   # 失败时是否自动重启
+            'max_retries': 3,        # 最大重试次数
+            'retry_delay': 60,       # 重试延迟 (秒)
+            'refresh_rate': 1000,    # 刷新率 (毫秒)
         }
-        self.logs.append(log_entry)
-    
-    def get_duration(self) -> Optional[float]:
-        """获取任务持续时间 (秒)
         
-        Returns:
-            Optional[float]: 持续时间，未结束则返回None
-        """
-        if not self.start_time:
-            return None
-        
-        end = self.end_time or datetime.now()
-        return (end - self.start_time).total_seconds()
+        # 元数据（存储额外信息）
+        self.metadata = {}
     
     def to_dict(self) -> Dict[str, Any]:
         """将任务信息转换为字典"""
@@ -111,18 +66,13 @@ class TaskInfo:
             'name': self.name,
             'description': self.description,
             'status': self.status,
+            'progress': self.progress,
+            'message': self.message,
+            'create_time': self.create_time.isoformat() if self.create_time else None,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
-            'progress': self.progress,
-            'result': self.result,
-            'error': self.error,
-            'logs': [
-                {
-                    'time': log['time'].isoformat(),
-                    'message': log['message']
-                }
-                for log in self.logs
-            ],
+            'last_run_time': self.last_run_time.isoformat() if self.last_run_time else None,
+            'config': self.config,
             'metadata': self.metadata
         }
     
@@ -137,22 +87,21 @@ class TaskInfo:
         
         task_info.status = data.get('status', cls.STATUS_PENDING)
         task_info.progress = data.get('progress', 0.0)
-        task_info.result = data.get('result')
-        task_info.error = data.get('error')
-        task_info.metadata = data.get('metadata', {})
+        task_info.message = data.get('message', '')
         
+        # 解析时间
+        if data.get('create_time'):
+            task_info.create_time = datetime.fromisoformat(data['create_time'])
         if data.get('start_time'):
             task_info.start_time = datetime.fromisoformat(data['start_time'])
-        
         if data.get('end_time'):
             task_info.end_time = datetime.fromisoformat(data['end_time'])
+        if data.get('last_run_time'):
+            task_info.last_run_time = datetime.fromisoformat(data['last_run_time'])
         
-        # 加载日志
-        for log_entry in data.get('logs', []):
-            task_info.logs.append({
-                'time': datetime.fromisoformat(log_entry['time']),
-                'message': log_entry['message']
-            })
+        # 配置和元数据
+        task_info.config = data.get('config', task_info.config)
+        task_info.metadata = data.get('metadata', {})
         
         return task_info
 
@@ -269,6 +218,7 @@ class TaskManager(QObject):
             bool: 是否成功移除
         """
         if task_id not in self.tasks:
+            logger.warning(f"任务不存在: {task_id}")
             return False
         
         # 如果任务正在运行，先停止
@@ -278,12 +228,34 @@ class TaskManager(QObject):
         # 从任务字典中移除
         del self.tasks[task_id]
         
+        # 从工作线程池中移除
+        if task_id in self.worker_threads:
+            del self.worker_threads[task_id]
+        
         # 发送任务移除信号
         self.task_removed.emit(task_id)
         
         logger.info(f"任务已移除: {task_id}")
-        
         return True
+    
+    def get_task(self, task_id: str) -> Optional[TaskInfo]:
+        """获取任务
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            Optional[TaskInfo]: 任务信息，不存在时返回None
+        """
+        return self.tasks.get(task_id)
+    
+    def get_all_tasks(self) -> Dict[str, TaskInfo]:
+        """获取所有任务
+        
+        Returns:
+            Dict[str, TaskInfo]: 任务字典
+        """
+        return self.tasks.copy()
     
     def start_task(self, task_id: str) -> bool:
         """启动任务
@@ -294,47 +266,54 @@ class TaskManager(QObject):
         Returns:
             bool: 是否成功启动
         """
-        if task_id not in self.tasks:
-            logger.error(f"任务不存在: {task_id}")
+        task_info = self.get_task(task_id)
+        if not task_info:
+            logger.warning(f"任务不存在: {task_id}")
             return False
         
-        task_info = self.tasks[task_id]
-        
-        # 检查任务是否已经在运行
+        # 如果任务已经在运行
         if task_id in self.worker_threads and self.worker_threads[task_id].is_alive():
-            logger.warning(f"任务已在运行中: {task_id}")
+            logger.warning(f"任务已在运行中: {task_info.name}")
             return False
         
         # 获取任务函数和参数
         task_func = task_info.metadata.get('func')
-        if not task_func:
-            logger.error(f"任务没有关联的函数: {task_id}")
-            return False
-        
         task_args = task_info.metadata.get('args', ())
         task_kwargs = task_info.metadata.get('kwargs', {})
         
+        if not task_func:
+            logger.error(f"任务函数未定义: {task_id}")
+            task_info.status = TaskInfo.STATUS_FAILED
+            task_info.error = "任务函数未定义"
+            self.task_failed.emit(task_id, "任务函数未定义")
+            return False
+        
+        # 更新任务状态
+        task_info.status = TaskInfo.STATUS_RUNNING
+        task_info.start_time = datetime.now()
+        task_info.last_run_time = datetime.now()
+        task_info.progress = 0.0
+        task_info.message = "任务已启动"
+        task_info.error = None
+        task_info.result = None
+        
         # 创建工作线程
-        worker = threading.Thread(
+        thread = threading.Thread(
             target=self._task_worker,
             args=(task_id, task_func, task_args, task_kwargs),
             daemon=True
         )
         
         # 保存线程
-        self.worker_threads[task_id] = worker
+        self.worker_threads[task_id] = thread
         
-        # 标记任务开始
-        task_info.start()
+        # 启动线程
+        thread.start()
         
         # 发送任务开始信号
         self.task_started.emit(task_id)
         
-        # 启动线程
-        worker.start()
-        
         logger.info(f"任务已启动: {task_info.name} ({task_id})")
-        
         return True
     
     def stop_task(self, task_id: str) -> bool:
@@ -346,58 +325,54 @@ class TaskManager(QObject):
         Returns:
             bool: 是否成功停止
         """
-        if task_id not in self.tasks:
+        task_info = self.get_task(task_id)
+        if not task_info:
+            logger.warning(f"任务不存在: {task_id}")
             return False
         
-        task_info = self.tasks[task_id]
-        
-        # 检查任务是否在运行
+        # 如果任务不在运行中
         if task_id not in self.worker_threads or not self.worker_threads[task_id].is_alive():
-            logger.warning(f"任务未在运行: {task_id}")
+            logger.warning(f"任务未在运行中: {task_info.name}")
             return False
         
-        # 设置停止标志
-        task_info.metadata['stop'] = True
-        
-        # 标记任务停止
-        task_info.stop()
+        # 更新任务状态
+        task_info.status = TaskInfo.STATUS_STOPPED
+        task_info.end_time = datetime.now()
+        task_info.message = "任务已停止"
         
         # 发送任务停止信号
         self.task_stopped.emit(task_id)
         
         logger.info(f"任务已停止: {task_info.name} ({task_id})")
-        
         return True
     
-    def get_task(self, task_id: str) -> Optional[TaskInfo]:
-        """获取任务信息
+    def update_task_progress(self, task_id: str, progress: float, message: str = '') -> bool:
+        """更新任务进度
         
         Args:
             task_id: 任务ID
+            progress: 进度 (0.0-1.0)
+            message: 状态消息
             
         Returns:
-            Optional[TaskInfo]: 任务信息，不存在时返回None
+            bool: 是否成功更新
         """
-        return self.tasks.get(task_id)
-    
-    def get_all_tasks(self) -> Dict[str, TaskInfo]:
-        """获取所有任务信息
+        task_info = self.get_task(task_id)
+        if not task_info:
+            return False
         
-        Returns:
-            Dict[str, TaskInfo]: 任务信息字典
-        """
-        return self.tasks.copy()
-    
-    def get_running_tasks(self) -> List[str]:
-        """获取正在运行的任务ID列表
+        # 限制进度范围
+        progress = max(0.0, min(1.0, progress))
         
-        Returns:
-            List[str]: 任务ID列表
-        """
-        return [
-            task_id for task_id in self.worker_threads
-            if task_id in self.worker_threads and self.worker_threads[task_id].is_alive()
-        ]
+        # 更新任务信息
+        task_info.progress = progress
+        if message:
+            task_info.message = message
+        
+        # 发送进度信号
+        self.task_progress.emit(task_id, progress, message)
+        
+        return True
     
     def shutdown(self):
         """关闭任务管理器"""
@@ -432,49 +407,56 @@ class TaskManager(QObject):
         self.running_tasks += 1
         
         try:
-            # 添加停止检查回调
+            # 创建停止检查函数
             def check_stop():
-                return task_info.metadata.get('stop', False)
+                return task_info.status == TaskInfo.STATUS_STOPPED
             
-            # 添加进度更新回调
-            def update_progress(progress: float, message: str = None):
-                task_info.update_progress(progress, message)
-                self.task_progress.emit(task_id, progress, message or '')
+            # 创建进度更新函数
+            def update_progress(progress, message=''):
+                self.update_task_progress(task_id, progress, message)
             
-            # 添加回调到关键字参数
-            task_kwargs['check_stop'] = check_stop
-            task_kwargs['update_progress'] = update_progress
+            # 添加额外参数
+            kwargs = task_kwargs.copy()
+            kwargs['check_stop'] = check_stop
+            kwargs['update_progress'] = update_progress
             
             # 执行任务函数
-            result = task_func(*task_args, **task_kwargs)
+            result = task_func(*task_args, **kwargs)
             
-            # 检查是否被停止
-            if check_stop():
-                # 任务已被停止，不触发完成信号
-                pass
-            else:
-                # 标记任务完成
-                task_info.complete(result)
-                
-                # 发送任务完成信号
-                self.task_completed.emit(task_id, result)
-                
-                logger.info(f"任务完成: {task_info.name} ({task_id})")
-        
+            # 如果任务被停止
+            if task_info.status == TaskInfo.STATUS_STOPPED:
+                return
+            
+            # 更新任务状态
+            task_info.status = TaskInfo.STATUS_COMPLETED
+            task_info.end_time = datetime.now()
+            task_info.result = result
+            task_info.progress = 1.0
+            task_info.message = "任务已完成"
+            
+            # 发送任务完成信号
+            self.task_completed.emit(task_id, result)
+            
+            logger.info(f"任务已完成: {task_info.name} ({task_id})")
+            
         except Exception as e:
-            # 记录错误
-            error_message = str(e)
-            
-            # 标记任务失败
-            task_info.fail(error_message)
+            # 如果任务被停止
+            if task_info.status == TaskInfo.STATUS_STOPPED:
+                return
+                
+            # 更新任务状态
+            task_info.status = TaskInfo.STATUS_FAILED
+            task_info.end_time = datetime.now()
+            task_info.error = str(e)
+            task_info.message = f"任务失败: {e}"
             
             # 发送任务失败信号
-            self.task_failed.emit(task_id, error_message)
+            self.task_failed.emit(task_id, str(e))
             
-            logger.error(f"任务失败: {task_info.name} ({task_id}) - {error_message}")
+            logger.error(f"任务执行失败: {task_info.name} ({task_id}): {e}")
             import traceback
             logger.error(traceback.format_exc())
-        
+            
         finally:
             # 减少运行中任务计数
             self.running_tasks -= 1

@@ -93,52 +93,59 @@ class MainWindow(QMainWindow):
     def init_controllers(self):
         """初始化控制器"""
         try:
-            # 初始化配置控制器
-            self.config_controller = ConfigController(self.config_panel)
+            # 配置控制器
+            from ui.controllers.config_controller import ConfigController
+            from config.config_manager import ConfigManager
+            
+            config_manager = ConfigManager()
+            self.config_controller = ConfigController(self.config_panel, config_manager)
             logger.info("配置控制器初始化成功")
             
-            # 初始化OCR控制器
-            self.ocr_controller = OCRController(self.ocr_tab)
+            # OCR控制器
+            from ui.controllers.tabs.ocr_controller import OCRController
+            from core.ocr_processor import OCRProcessor
+            from core.screen_capture import ScreenCapture
+            from core.text_recognizer import TextRecognizer
+            
+            ocr_processor = OCRProcessor()
+            screen_capture = ScreenCapture()
+            text_recognizer = TextRecognizer(ocr_processor, screen_capture)
+            
+            self.ocr_controller = OCRController(self.ocr_tab, text_recognizer, config_manager)
             logger.info("OCR控制器初始化成功")
             
-            # 初始化监控引擎
-            from core.monitor_engine import MonitorEngine
-            self.monitor_engine = MonitorEngine()
-            logger.info("监控引擎初始化成功")
-            
-            # 初始化监控控制器
+            # 监控控制器
             from ui.controllers.tabs.monitor_controller import MonitorController
-            self.monitor_controller = MonitorController(self.monitor_tab)
+            from core.monitor_engine import MonitorEngine
+            
+            monitor_engine = MonitorEngine(text_recognizer)
+            self.monitor_controller = MonitorController(self.monitor_tab, monitor_engine, config_manager)
+            
+            # 设置OCR控制器的监控引擎
+            self.ocr_controller.set_monitor_engine(monitor_engine)
             logger.info("监控控制器初始化成功")
             
-            # 初始化任务调度器
-            from core.task_manager import TaskManager
-            from core.task_scheduler import TaskScheduler
-            
-            # 创建任务调度器
-            self.task_scheduler = TaskScheduler()
-            logger.info("任务调度器初始化成功")
-            
-            # 创建任务管理器，并传入监控引擎和任务调度器
-            self.task_manager = TaskManager(monitor_engine=self.monitor_engine, task_scheduler=self.task_scheduler)
-            logger.info("任务管理器初始化成功")
-            
-            # 设置监控引擎的任务调度器
-            self.monitor_engine.task_scheduler = self.task_scheduler
-            
-            # 初始化任务控制器
+            # 任务控制器
             from ui.controllers.tabs.task_controller import TaskController
-            self.task_controller = TaskController(self.task_tab, self.task_manager, self.monitor_engine)
+            from core.task_manager import TaskManager
+            
+            task_manager = TaskManager(monitor_engine)
+            self.task_controller = TaskController(self.task_tab, task_manager, monitor_engine)
             logger.info("任务控制器初始化成功")
             
-            # 注册所有标签页到配置控制器
-            self.register_tabs_to_config_controller()
+            # 日志控制器
+            from ui.controllers.tabs.logs_controller import LogsController
+            from ui.models.log_model import LogModel
             
-            # 其他控制器...
-            # TODO: 添加其他控制器初始化
+            log_model = LogModel()
+            self.logs_controller = LogsController(self.logs_tab, log_model)
+            logger.info("日志控制器初始化成功")
+            
+            # 连接控制器之间的信号
+            self.connect_controllers()
             
         except Exception as e:
-            logger.error(f"控制器初始化失败: {e}")
+            logger.error(f"初始化控制器失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
     
@@ -305,3 +312,42 @@ class MainWindow(QMainWindow):
             
         # 继续默认的关闭事件
         super().closeEvent(event)
+
+    def connect_controllers(self):
+        """连接控制器之间的信号"""
+        try:
+            # 注册所有标签页到配置控制器
+            self.register_tabs_to_config_controller()
+            
+            # 连接监控引擎到任务管理器
+            if hasattr(self, 'monitor_controller') and hasattr(self, 'task_controller'):
+                monitor_engine = self.monitor_controller.monitor_engine
+                task_manager = self.task_controller.task_manager
+                
+                # 设置任务管理器的监控引擎
+                if task_manager and monitor_engine:
+                    task_manager.set_monitor_engine(monitor_engine)
+                    logger.info("已连接监控引擎到任务管理器")
+            
+            # 连接日志模型到其他控制器
+            if hasattr(self, 'logs_controller') and hasattr(self.logs_controller, 'log_model'):
+                log_model = self.logs_controller.log_model
+                
+                # 连接OCR控制器的日志
+                if hasattr(self, 'ocr_controller'):
+                    self.ocr_controller.set_log_model(log_model)
+                
+                # 连接监控控制器的日志
+                if hasattr(self, 'monitor_controller'):
+                    self.monitor_controller.set_log_model(log_model)
+                
+                # 连接任务控制器的日志
+                if hasattr(self, 'task_controller'):
+                    self.task_controller.set_log_model(log_model)
+                
+                logger.info("已连接日志模型到所有控制器")
+        
+        except Exception as e:
+            logger.error(f"连接控制器失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())

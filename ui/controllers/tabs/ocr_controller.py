@@ -990,3 +990,15 @@ class OCRController(QObject):
             "OCR错误", 
             f"OCR处理过程中发生错误: {error}"
         )
+
+    def set_monitor_engine(self, monitor_engine):
+        """设置监控引擎"""
+        self.monitor_engine = monitor_engine
+    
+    def set_log_model(self, log_model):
+        """设置日志模型
+        
+        Args:
+            log_model: 日志模型
+        """
+        self.log_model = log_model

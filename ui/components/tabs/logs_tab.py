@@ -39,38 +39,45 @@ class LogsTab(QWidget):
         # 日志级别
         layout.addWidget(QLabel("级别:"))
         level_combo = QComboBox()
+        level_combo.setObjectName("level_combo")
         level_combo.addItems(["全部", "调试", "信息", "警告", "错误", "严重"])
         layout.addWidget(level_combo)
         
         # 日志来源
         layout.addWidget(QLabel("来源:"))
         source_combo = QComboBox()
+        source_combo.setObjectName("source_combo")
         source_combo.addItems(["全部", "OCR", "监控", "任务", "动作", "系统"])
         layout.addWidget(source_combo)
         
         # 时间范围
         layout.addWidget(QLabel("开始时间:"))
         start_time = QDateTimeEdit(QDateTime.currentDateTime().addDays(-1))
+        start_time.setObjectName("start_time")
         start_time.setCalendarPopup(True)
         layout.addWidget(start_time)
         
         layout.addWidget(QLabel("结束时间:"))
         end_time = QDateTimeEdit(QDateTime.currentDateTime())
+        end_time.setObjectName("end_time")
         end_time.setCalendarPopup(True)
         layout.addWidget(end_time)
         
         # 搜索框
         layout.addWidget(QLabel("搜索:"))
         search_edit = QLineEdit()
+        search_edit.setObjectName("search_edit")
         search_edit.setPlaceholderText("输入关键词搜索")
         layout.addWidget(search_edit)
         
         # 搜索按钮
         search_btn = QPushButton("搜索")
+        search_btn.setObjectName("search_btn")
         layout.addWidget(search_btn)
         
         # 重置按钮
         reset_btn = QPushButton("重置")
+        reset_btn.setObjectName("reset_btn")
         layout.addWidget(reset_btn)
         
         return group
@@ -78,6 +85,7 @@ class LogsTab(QWidget):
     def create_logs_table(self):
         """创建日志表格"""
         table = QTableWidget(0, 5)
+        table.setObjectName("logs_table")
         table.setHorizontalHeaderLabels(["时间", "级别", "来源", "消息", "详情"])
         table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -92,6 +100,7 @@ class LogsTab(QWidget):
         
         # 日志详情文本框
         self.detail_text = QTextEdit()
+        self.detail_text.setObjectName("detail_text")
         self.detail_text.setReadOnly(True)
         self.detail_text.setPlaceholderText("选择日志项查看详情")
         layout.addWidget(self.detail_text)
@@ -106,11 +115,13 @@ class LogsTab(QWidget):
         
         # 自动滚动
         auto_scroll = QCheckBox("自动滚动")
+        auto_scroll.setObjectName("auto_scroll")
         auto_scroll.setChecked(True)
         layout.addWidget(auto_scroll)
         
         # 自动刷新
         auto_refresh = QCheckBox("自动刷新")
+        auto_refresh.setObjectName("auto_refresh")
         auto_refresh.setChecked(True)
         layout.addWidget(auto_refresh)
         
@@ -119,14 +130,17 @@ class LogsTab(QWidget):
         
         # 刷新按钮
         refresh_btn = QPushButton("刷新")
+        refresh_btn.setObjectName("refresh_btn")
         layout.addWidget(refresh_btn)
         
         # 清空按钮
         clear_btn = QPushButton("清空日志")
+        clear_btn.setObjectName("clear_btn")
         layout.addWidget(clear_btn)
         
         # 导出按钮
         export_btn = QPushButton("导出日志")
+        export_btn.setObjectName("export_btn")
         layout.addWidget(export_btn)
         
         return group

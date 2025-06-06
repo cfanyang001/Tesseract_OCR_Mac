@@ -72,6 +72,9 @@ class TaskController(QObject):
         
         # 更新区域下拉框
         self.update_area_combo()
+        
+        # 更新规则下拉框
+        self.update_rule_combo()
     
     def connect_signals(self):
         """连接信号"""
@@ -174,9 +177,13 @@ class TaskController(QObject):
             # 监控规则
             rule_id = task_info.metadata.get('rule_id', '')
             rule_name = "未设置"
-            if self.monitor_engine and rule_id:
-                # 这里需要从监控引擎获取规则名称
-                rule_name = f"规则 {rule_id[:8]}"
+            if self.monitor_engine and hasattr(self.monitor_engine, 'rule_matcher') and rule_id:
+                # 获取规则名称
+                rule = self.monitor_engine.rule_matcher.get_rule(rule_id)
+                if rule:
+                    rule_name = rule.name
+                else:
+                    rule_name = f"规则 {rule_id[:8]}"
             self.task_tab.task_table.setItem(row, 3, QTableWidgetItem(rule_name))
             
             # 上次触发时间
@@ -211,7 +218,7 @@ class TaskController(QObject):
         status_combo = self.task_tab.findChild(QObject, "status_combo")
         if status_combo:
             status_index = {
-                TaskInfo.STATUS_PENDING: 0,
+                TaskInfo.STATUS_PENDING: 1,
                 TaskInfo.STATUS_RUNNING: 0,
                 TaskInfo.STATUS_COMPLETED: 3,
                 TaskInfo.STATUS_FAILED: 4,
@@ -223,33 +230,29 @@ class TaskController(QObject):
         area_combo = self.task_tab.findChild(QObject, "area_combo")
         if area_combo:
             area_id = task_info.metadata.get('area_id', '')
-            if area_id and self.monitor_engine:
-                area = self.monitor_engine.get_area(area_id)
-                if area:
-                    index = area_combo.findData(area_id)
-                    if index >= 0:
-                        area_combo.setCurrentIndex(index)
+            index = area_combo.findData(area_id)
+            if index >= 0:
+                area_combo.setCurrentIndex(index)
         
         # 更新规则选择
         rule_combo = self.task_tab.findChild(QObject, "rule_combo")
         if rule_combo:
             rule_id = task_info.metadata.get('rule_id', '')
-            if rule_id:
-                index = rule_combo.findData(rule_id)
-                if index >= 0:
-                    rule_combo.setCurrentIndex(index)
+            index = rule_combo.findData(rule_id)
+            if index >= 0:
+                rule_combo.setCurrentIndex(index)
         
         # 更新刷新频率
         refresh_spin = self.task_tab.findChild(QObject, "refresh_spin")
         if refresh_spin:
-            refresh_rate = task_info.metadata.get('refresh_rate', 1000)
-            refresh_spin.setValue(refresh_rate)
+            refresh_rate = task_info.config.get('refresh_rate', 1000)
+            # 转换为秒
+            refresh_spin.setValue(refresh_rate // 1000)
         
-        # 更新自动重启选项
+        # 更新自动重启
         restart_check = self.task_tab.findChild(QObject, "restart_check")
         if restart_check:
-            auto_restart = task_info.metadata.get('auto_restart', False)
-            restart_check.setChecked(auto_restart)
+            restart_check.setChecked(task_info.config.get('auto_restart', False))
         
         # 更新进度条
         progress_bar = self.task_tab.findChild(QObject, "progress_bar")
@@ -258,58 +261,64 @@ class TaskController(QObject):
             progress_bar.setValue(progress_value)
     
     def update_area_combo(self):
-        """更新区域下拉框"""
+        """更新监控区域下拉框"""
         area_combo = self.task_tab.findChild(QObject, "area_combo")
-        if not area_combo or not self.monitor_engine:
+        if not area_combo:
             return
         
-        # 保存当前选择
-        current_data = area_combo.currentData()
+        # 保存当前选择的项
+        current_text = area_combo.currentText()
         
         # 清空下拉框
         area_combo.clear()
         
-        # 添加区域选项
+        # 如果没有监控引擎，添加一个默认项
+        if not self.monitor_engine:
+            area_combo.addItem("未设置")
+            return
+        
+        # 添加所有区域
         areas = self.monitor_engine.get_all_areas()
         for area_id, area in areas.items():
             area_combo.addItem(area.name, area_id)
         
-        # 添加新建区域选项
+        # 添加一个"新建区域"选项
         area_combo.addItem("新建区域...", "new")
         
         # 恢复之前的选择
-        if current_data:
-            index = area_combo.findData(current_data)
-            if index >= 0:
-                area_combo.setCurrentIndex(index)
+        index = area_combo.findText(current_text)
+        if index >= 0:
+            area_combo.setCurrentIndex(index)
     
     def update_rule_combo(self):
-        """更新规则下拉框"""
+        """更新监控规则下拉框"""
         rule_combo = self.task_tab.findChild(QObject, "rule_combo")
-        if not rule_combo or not self.monitor_engine:
+        if not rule_combo:
             return
         
-        # 保存当前选择
-        current_data = rule_combo.currentData()
+        # 保存当前选择的项
+        current_text = rule_combo.currentText()
         
         # 清空下拉框
         rule_combo.clear()
         
-        # 添加规则选项
-        if hasattr(self.monitor_engine, 'rule_matcher'):
-            rules = self.monitor_engine.rule_matcher.get_all_rules()
-            for rule_id, rule in rules.items():
-                rule_name = f"规则 {rule_id[:8]}"
-                rule_combo.addItem(rule_name, rule_id)
+        # 如果没有监控引擎，添加一个默认项
+        if not self.monitor_engine or not hasattr(self.monitor_engine, 'rule_matcher'):
+            rule_combo.addItem("未设置")
+            return
         
-        # 添加新建规则选项
+        # 添加所有规则
+        rules = self.monitor_engine.rule_matcher.get_all_rules()
+        for rule_id, rule in rules.items():
+            rule_combo.addItem(rule.name, rule_id)
+        
+        # 添加一个"新建规则"选项
         rule_combo.addItem("新建规则...", "new")
         
         # 恢复之前的选择
-        if current_data:
-            index = rule_combo.findData(current_data)
-            if index >= 0:
-                rule_combo.setCurrentIndex(index)
+        index = rule_combo.findText(current_text)
+        if index >= 0:
+            rule_combo.setCurrentIndex(index)
     
     def get_status_text(self, status: str) -> str:
         """获取状态文本"""

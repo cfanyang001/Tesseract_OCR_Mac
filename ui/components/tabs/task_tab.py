@@ -68,37 +68,35 @@ class TaskTab(QWidget):
         status_layout.addWidget(QLabel("任务状态:"))
         status_combo = QComboBox()
         status_combo.setObjectName("status_combo")
-        status_combo.addItems(["运行中", "已暂停", "已停止", "已完成", "出错"])
+        status_combo.addItems(["运行中", "等待中", "已停止", "已完成", "已失败"])
+        status_combo.setEnabled(False)  # 设为只读
         status_layout.addWidget(status_combo)
         layout.addLayout(status_layout)
         
-        # 区域选择
+        # 监控区域
         area_layout = QHBoxLayout()
         area_layout.addWidget(QLabel("监控区域:"))
         area_combo = QComboBox()
         area_combo.setObjectName("area_combo")
-        area_combo.addItems(["区域1", "区域2", "区域3", "新建区域..."])
         area_layout.addWidget(area_combo)
         layout.addLayout(area_layout)
         
-        # 规则选择
+        # 监控规则
         rule_layout = QHBoxLayout()
         rule_layout.addWidget(QLabel("监控规则:"))
         rule_combo = QComboBox()
         rule_combo.setObjectName("rule_combo")
-        rule_combo.addItems(["规则1", "规则2", "规则3", "新建规则..."])
         rule_layout.addWidget(rule_combo)
         layout.addLayout(rule_layout)
         
         # 刷新频率
         refresh_layout = QHBoxLayout()
-        refresh_layout.addWidget(QLabel("刷新频率:"))
+        refresh_layout.addWidget(QLabel("刷新频率(秒):"))
         refresh_spin = QSpinBox()
         refresh_spin.setObjectName("refresh_spin")
-        refresh_spin.setRange(100, 10000)
-        refresh_spin.setSingleStep(100)
-        refresh_spin.setValue(1000)
-        refresh_spin.setSuffix(" 毫秒")
+        refresh_spin.setMinimum(1)
+        refresh_spin.setMaximum(3600)
+        refresh_spin.setValue(5)
         refresh_layout.addWidget(refresh_spin)
         layout.addLayout(refresh_layout)
         

@@ -1241,3 +1241,11 @@ class MonitorController(QObject):
             logger.error(f"更新鼠标设置失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
+
+    def set_log_model(self, log_model):
+        """设置日志模型
+        
+        Args:
+            log_model: 日志模型
+        """
+        self.log_model = log_model
