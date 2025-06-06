@@ -1,16 +1,16 @@
 {
   "ocr": {
-    "language": "eng",
+    "language": "chi_sim",
     "psm": "3",
     "oem": "3",
-    "accuracy": 70,
+    "accuracy": 80,
     "preprocess": true,
     "autocorrect": false,
     "screen_area": {
-      "x": 1672,
-      "y": 664,
-      "width": 248,
-      "height": 130,
+      "x": 1642,
+      "y": 691,
+      "width": 278,
+      "height": 212,
       "is_selected": true
     }
   },
