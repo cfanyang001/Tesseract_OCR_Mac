@@ -11,7 +11,7 @@ class ActionController(QObject):
     """动作控制器，负责处理智能点击等动作"""
     
     # 信号
-    log_message = pyqtSignal(str, str, str, str)  # 日志信号 (级别, 来源, 消息, 详情)
+    log_message = pyqtSignal(str)  # 日志消息信号
     
     def __init__(self, action_tab):
         """初始化动作控制器
@@ -27,11 +27,11 @@ class ActionController(QObject):
         try:
             self.smart_click = SmartClick()
             logger.info("智能点击功能初始化成功")
-            self.log_message.emit("info", "action", "智能点击功能初始化成功", "")
+            self.log_message.emit("智能点击功能初始化成功")
         except Exception as e:
             error_msg = f"智能点击功能初始化失败: {e}"
             logger.error(error_msg)
-            self.log_message.emit("error", "action", "智能点击功能初始化失败", str(e))
+            self.log_message.emit(error_msg)
             raise
         
         # 连接信号
@@ -60,15 +60,15 @@ class ActionController(QObject):
             offset: 偏移
         """
         logger.info(f"请求点击文本: '{text}', 类型: {click_type}")
-        self.log_message.emit("info", "action", f"尝试点击文本: '{text}'", f"类型: {click_type}")
+        self.log_message.emit(f"尝试点击文本: '{text}'")
         
         # 执行点击
         success = self.smart_click.click_on_text(text, search_area, click_type, offset)
         
         if success:
-            self.log_message.emit("info", "action", f"成功点击文本: '{text}'", f"类型: {click_type}")
+            self.log_message.emit(f"成功点击文本: '{text}'")
         else:
-            self.log_message.emit("warning", "action", f"点击文本失败: '{text}'", f"类型: {click_type}")
+            self.log_message.emit(f"点击文本失败: '{text}'")
     
     def click_relative_to_text(self, text, relative_x, relative_y, search_area=None, click_type="single"):
         """相对于文本点击
@@ -81,18 +81,15 @@ class ActionController(QObject):
             click_type: 点击类型
         """
         logger.info(f"请求相对点击: 参考文本 '{text}', 相对位置: ({relative_x:.2f}, {relative_y:.2f})")
-        self.log_message.emit("info", "action", f"尝试相对点击: 参考文本 '{text}'", 
-                             f"相对位置: ({relative_x:.2f}, {relative_y:.2f}), 类型: {click_type}")
+        self.log_message.emit(f"尝试相对点击: 参考文本 '{text}'")
         
         # 执行点击
         success = self.smart_click.click_relative_to_text(text, relative_x, relative_y, search_area, click_type)
         
         if success:
-            self.log_message.emit("info", "action", f"成功执行相对点击: 参考文本 '{text}'", 
-                                f"相对位置: ({relative_x:.2f}, {relative_y:.2f})")
+            self.log_message.emit(f"成功执行相对点击: 参考文本 '{text}'")
         else:
-            self.log_message.emit("warning", "action", f"相对点击失败: 参考文本 '{text}'", 
-                                f"相对位置: ({relative_x:.2f}, {relative_y:.2f})")
+            self.log_message.emit(f"相对点击失败: 参考文本 '{text}'")
     
     def click_on_element(self, template_path, search_area=None, click_type="single", offset=None):
         """点击元素
@@ -104,15 +101,15 @@ class ActionController(QObject):
             offset: 偏移
         """
         logger.info(f"请求点击元素: 模板 '{template_path}', 类型: {click_type}")
-        self.log_message.emit("info", "action", f"尝试点击元素: 模板 '{template_path}'", f"类型: {click_type}")
+        self.log_message.emit(f"尝试点击元素: 模板 '{template_path}'")
         
         # 执行点击
         success = self.smart_click.click_on_element(template_path, search_area, click_type, offset)
         
         if success:
-            self.log_message.emit("info", "action", f"成功点击元素: 模板 '{template_path}'", f"类型: {click_type}")
+            self.log_message.emit(f"成功点击元素: 模板 '{template_path}'")
         else:
-            self.log_message.emit("warning", "action", f"点击元素失败: 模板 '{template_path}'", f"类型: {click_type}")
+            self.log_message.emit(f"点击元素失败: 模板 '{template_path}'")
     
     def _on_target_found(self, text, rect):
         """目标找到处理
@@ -141,7 +138,7 @@ class ActionController(QObject):
             error_msg: 错误消息
         """
         logger.error(f"智能点击错误: {error_msg}")
-        self.log_message.emit("error", "action", "智能点击错误", error_msg)
+        self.log_message.emit(f"智能点击错误: {error_msg}")
         
         # 显示错误消息
         QMessageBox.warning(self.action_tab, "智能点击错误", error_msg)

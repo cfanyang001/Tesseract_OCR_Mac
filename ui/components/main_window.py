@@ -4,342 +4,304 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QSize, QTimer
 from PyQt5.QtGui import QIcon
+import traceback
 
 from ui.components.tabs.ocr_tab import OCRTab
 from ui.components.tabs.monitor_tab import MonitorTab
 from ui.components.tabs.task_tab import TaskTab
 from ui.components.tabs.logs_tab import LogsTab
 from ui.components.tabs.action_tab import ActionTab
+from ui.components.tabs.performance_tab import PerformanceTab
 from ui.components.status_bar import StatusBar
 from ui.components.config_panel import ConfigPanel
 
 # 导入控制器
 from ui.controllers.tabs.ocr_controller import OCRController
+from ui.controllers.tabs.monitor_controller import MonitorController
+from ui.controllers.tabs.task_controller import TaskController
+from ui.controllers.tabs.logs_controller import LogsController
+from ui.controllers.tabs.action_controller import ActionController
+from ui.controllers.tabs.performance_controller import PerformanceController
 from ui.controllers.config_controller import ConfigController
 from loguru import logger
 
+# 导入配置管理器
+from config.config_manager import ConfigManager
+
 
 class MainWindow(QMainWindow):
-    """主窗口类，包含标签页和菜单栏"""
+    """主窗口"""
     
     def __init__(self):
         super().__init__()
         
         self.setWindowTitle("Tesseract OCR监控软件")
-        self.setMinimumSize(QSize(1100, 700))
+        self.setMinimumSize(1200, 800)
         
-        # 创建中央部件
+        # 创建配置管理器
+        self.config_manager = ConfigManager()
+        
+        # 创建中心部件
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         
         # 创建主布局
-        self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout = QVBoxLayout(self.central_widget)
         
-        # 创建水平分割器
+        # 创建分割器
         self.splitter = QSplitter(Qt.Horizontal)
         
-        # 创建左侧标签页容器
-        self.tabs_container = QWidget()
-        self.tabs_layout = QVBoxLayout(self.tabs_container)
-        self.tabs_layout.setContentsMargins(0, 0, 0, 0)
-        
         # 创建标签页
-        self.tabs = QTabWidget()
-        self.tabs.setTabPosition(QTabWidget.North)
-        self.tabs.setMovable(True)
-        self.tabs.currentChanged.connect(self.on_tab_changed)
+        self.tab_widget = QTabWidget()
         
-        # 创建各个标签页
+        # 创建OCR标签页
         self.ocr_tab = OCRTab()
+        self.tab_widget.addTab(self.ocr_tab, "OCR识别")
+        
+        # 创建监控标签页
         self.monitor_tab = MonitorTab()
+        self.tab_widget.addTab(self.monitor_tab, "屏幕监控")
+        
+        # 创建任务标签页
         self.task_tab = TaskTab()
-        self.logs_tab = LogsTab()
+        self.tab_widget.addTab(self.task_tab, "任务管理")
+        
+        # 创建动作标签页
         self.action_tab = ActionTab()
+        self.tab_widget.addTab(self.action_tab, "智能点击")
         
-        # 添加标签页到标签页控件
-        self.tabs.addTab(self.ocr_tab, "OCR设置")
-        self.tabs.addTab(self.monitor_tab, "监控设置")
-        self.tabs.addTab(self.task_tab, "任务管理")
-        self.tabs.addTab(self.action_tab, "智能点击")
-        self.tabs.addTab(self.logs_tab, "日志")
+        # 创建日志标签页
+        self.logs_tab = LogsTab()
+        self.tab_widget.addTab(self.logs_tab, "日志")
         
-        # 将标签页控件添加到布局
-        self.tabs_layout.addWidget(self.tabs)
+        # 创建性能监控标签页
+        self.performance_tab = PerformanceTab()
+        self.tab_widget.addTab(self.performance_tab, "性能监控")
         
-        # 创建右侧配置面板
+        # 创建配置面板
         self.config_panel = ConfigPanel()
         
-        # 将标签页容器和配置面板添加到分割器
-        self.splitter.addWidget(self.tabs_container)
+        # 添加组件到分割器
+        self.splitter.addWidget(self.tab_widget)
         self.splitter.addWidget(self.config_panel)
         
-        # 设置分割器比例
-        self.splitter.setSizes([700, 300])
+        # 设置分割比例
+        self.splitter.setSizes([800, 400])
         
-        # 将分割器添加到主布局
-        self.layout.addWidget(self.splitter)
+        # 添加分割器到主布局
+        self.main_layout.addWidget(self.splitter)
         
         # 创建状态栏
         self.status_bar = StatusBar()
         self.setStatusBar(self.status_bar)
         
         # 创建菜单栏
-        self.create_menu_bar()
+        self._create_menu_bar()
         
         # 初始化控制器
-        self.init_controllers()
+        self._init_controllers()
         
-        # 使用定时器确保在UI完全加载后应用配置
-        QTimer.singleShot(100, self.apply_initial_config)
-    
-    def init_controllers(self):
-        """初始化控制器"""
-        try:
-            # 配置控制器
-            from ui.controllers.config_controller import ConfigController
-            from config.config_manager import ConfigManager
-            
-            config_manager = ConfigManager()
-            self.config_controller = ConfigController(self.config_panel, config_manager)
-            logger.info("配置控制器初始化成功")
-            
-            # OCR控制器
-            from ui.controllers.tabs.ocr_controller import OCRController
-            from core.ocr_processor import OCRProcessor
-            from core.screen_capture import ScreenCapture
-            from core.text_recognizer import TextRecognizer
-            
-            ocr_processor = OCRProcessor()
-            screen_capture = ScreenCapture()
-            text_recognizer = TextRecognizer(ocr_processor, screen_capture)
-            
-            self.ocr_controller = OCRController(self.ocr_tab, text_recognizer, config_manager)
-            logger.info("OCR控制器初始化成功")
-            
-            # 监控控制器
-            from ui.controllers.tabs.monitor_controller import MonitorController
-            from core.monitor_engine import MonitorEngine
-            
-            monitor_engine = MonitorEngine(text_recognizer)
-            self.monitor_controller = MonitorController(self.monitor_tab, monitor_engine, config_manager)
-            
-            # 设置OCR控制器的监控引擎
-            self.ocr_controller.set_monitor_engine(monitor_engine)
-            logger.info("监控控制器初始化成功")
-            
-            # 任务控制器
-            from ui.controllers.tabs.task_controller import TaskController
-            from core.task_manager import TaskManager
-            
-            task_manager = TaskManager(monitor_engine)
-            self.task_controller = TaskController(self.task_tab, task_manager, monitor_engine)
-            logger.info("任务控制器初始化成功")
-            
-            # 动作控制器
-            from ui.controllers.tabs.action_controller import ActionController
-            
-            self.action_controller = ActionController(self.action_tab)
-            logger.info("动作控制器初始化成功")
-            
-            # 日志控制器
-            from ui.controllers.tabs.logs_controller import LogsController
-            from ui.models.log_model import LogModel
-            
-            log_model = LogModel()
-            self.logs_controller = LogsController(self.logs_tab, log_model)
-            logger.info("日志控制器初始化成功")
-            
-            # 连接控制器之间的信号
-            self.connect_controllers()
-            
-        except Exception as e:
-            logger.error(f"初始化控制器失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-    
-    def register_tabs_to_config_controller(self):
-        """注册所有标签页到配置控制器"""
-        try:
-            # 注册所有标签页
-            self.config_controller.register_tab("OCR设置", self.ocr_tab)
-            self.config_controller.register_tab("监控设置", self.monitor_tab)
-            self.config_controller.register_tab("任务管理", self.task_tab)
-            self.config_controller.register_tab("智能点击", self.action_tab)
-            self.config_controller.register_tab("日志", self.logs_tab)
-            logger.info("所有标签页已注册到配置控制器")
-        except Exception as e:
-            logger.error(f"注册标签页到配置控制器失败: {e}")
-    
-    def apply_initial_config(self):
-        """应用初始配置到所有标签页"""
-        try:
-            if hasattr(self, 'config_controller'):
-                self.config_controller.apply_config_to_all_tabs()
-                logger.info("已应用初始配置到所有标签页")
-        except Exception as e:
-            logger.error(f"应用初始配置失败: {e}")
-    
-    def on_tab_changed(self, index):
-        """当标签页改变时"""
-        try:
-            # 获取当前标签页名称和组件
-            tab_name = self.tabs.tabText(index)
-            tab_widget = self.tabs.widget(index)
-            
-            # 如果离开监控标签页，停止监控
-            if hasattr(self, 'monitor_controller') and self.monitor_controller.is_monitoring:
-                # 获取之前的标签页名称
-                previous_index = getattr(self, '_previous_tab_index', -1)
-                if previous_index >= 0:
-                    previous_tab_name = self.tabs.tabText(previous_index)
-                    if previous_tab_name == "监控设置" and tab_name != "监控设置":
-                        # 停止监控
-                        self.monitor_controller.toggle_monitoring()
-                        logger.info("离开监控标签页，自动停止监控")
-            
-            # 更新配置面板
-            self.config_panel.set_current_tab(tab_name, tab_widget)
-            
-            # 记住当前标签页索引
-            self._previous_tab_index = index
-            
-            logger.info(f"切换到标签页: {tab_name}")
+        # 连接信号
+        self._connect_signals()
         
-        except Exception as e:
-            logger.error(f"切换标签页时发生错误: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        # 加载配置
+        self._load_config()
+        
+        logger.info("主窗口初始化完成")
     
-    def create_menu_bar(self):
+    def _create_menu_bar(self):
         """创建菜单栏"""
         menu_bar = self.menuBar()
         
         # 文件菜单
         file_menu = menu_bar.addMenu("文件")
         
-        new_task_action = QAction("新建任务", self)
-        new_task_action.setShortcut("Ctrl+N")
-        new_task_action.triggered.connect(self.on_new_task)
-        file_menu.addAction(new_task_action)
+        # 保存配置
+        save_config_action = QAction("保存配置", self)
+        save_config_action.triggered.connect(self._save_config)
+        file_menu.addAction(save_config_action)
         
-        open_action = QAction("打开配置", self)
-        open_action.setShortcut("Ctrl+O")
-        file_menu.addAction(open_action)
-        
-        save_action = QAction("保存配置", self)
-        save_action.setShortcut("Ctrl+S")
-        save_action.triggered.connect(self.save_current_config)
-        file_menu.addAction(save_action)
+        # 加载配置
+        load_config_action = QAction("加载配置", self)
+        load_config_action.triggered.connect(self._load_config)
+        file_menu.addAction(load_config_action)
         
         file_menu.addSeparator()
         
+        # 退出
         exit_action = QAction("退出", self)
-        exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
-        # 编辑菜单
-        edit_menu = menu_bar.addMenu("编辑")
-        
-        settings_action = QAction("设置", self)
-        edit_menu.addAction(settings_action)
         
         # 视图菜单
         view_menu = menu_bar.addMenu("视图")
         
-        fullscreen_action = QAction("全屏", self)
-        fullscreen_action.setShortcut("F11")
-        view_menu.addAction(fullscreen_action)
+        # 显示/隐藏配置面板
+        toggle_config_panel_action = QAction("显示/隐藏配置面板", self)
+        toggle_config_panel_action.triggered.connect(self._toggle_config_panel)
+        view_menu.addAction(toggle_config_panel_action)
         
         # 帮助菜单
         help_menu = menu_bar.addMenu("帮助")
         
+        # 关于
         about_action = QAction("关于", self)
+        about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
-        
-        doc_action = QAction("文档", self)
-        help_menu.addAction(doc_action)
     
-    def save_current_config(self):
-        """保存当前配置"""
-        if hasattr(self, 'config_controller'):
-            try:
-                # 获取当前标签页名称和组件
-                current_index = self.tabs.currentIndex()
-                tab_name = self.tabs.tabText(current_index)
-                tab_widget = self.tabs.widget(current_index)
-                
-                # 获取当前配置名称（从配置面板获取）
-                current_config = self.config_panel.current_config
-                
-                # 从当前标签页获取最新的配置
-                config_data = self.config_controller.get_config_from_tab(tab_name, tab_widget)
-                
-                # 发送保存信号
-                self.config_panel.config_saved.emit(current_config, config_data)
-                
-                # 显示成功消息
-                QMessageBox.information(self, "保存成功", f"配置 '{current_config}' 已保存")
-                
-                logger.info(f"配置 {current_config} 已保存")
-            except Exception as e:
-                logger.error(f"保存配置失败: {e}")
-                QMessageBox.warning(self, "保存失败", f"保存配置时发生错误: {e}")
-    
-    def on_new_task(self):
-        """创建新任务"""
+    def _init_controllers(self):
+        """初始化控制器"""
         try:
-            # 切换到任务管理标签页
-            task_tab_index = self.tabs.indexOf(self.task_tab)
-            self.tabs.setCurrentIndex(task_tab_index)
+            # 创建控制器
+            self.config_controller = ConfigController(self.config_panel)
+            logger.info("配置控制器初始化成功")
             
-            # 调用任务控制器的新建任务方法
-            if hasattr(self, 'task_controller'):
-                self.task_controller.on_new_task()
-            else:
-                logger.warning("任务控制器未初始化，无法创建新任务")
-        except Exception as e:
-            logger.error(f"创建新任务失败: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-    
-    def closeEvent(self, event):
-        """窗口关闭事件"""
-        try:
-            # 关闭任务管理器
-            if hasattr(self, 'task_manager'):
-                self.task_manager.shutdown()
-                logger.info("任务管理器已关闭")
-                
-            # 关闭任务调度器
-            if hasattr(self, 'task_scheduler'):
-                self.task_scheduler.stop()
-                logger.info("任务调度器已关闭")
-                
-        except Exception as e:
-            logger.error(f"关闭窗口时发生错误: {e}")
+            self.ocr_controller = OCRController(self.ocr_tab)
+            logger.info("OCR控制器初始化成功")
             
-        # 继续默认的关闭事件
-        super().closeEvent(event)
-
-    def connect_controllers(self):
-        """连接控制器之间的信号"""
-        try:
-            # 连接日志信号
+            self.monitor_controller = MonitorController(self.monitor_tab)
+            logger.info("监控控制器初始化成功")
+            
+            self.task_controller = TaskController(self.task_tab)
+            logger.info("任务控制器初始化成功")
+            
+            self.logs_controller = LogsController(self.logs_tab)
+            logger.info("日志控制器初始化成功")
+            
+            self.action_controller = ActionController(self.action_tab)
+            logger.info("动作控制器初始化成功")
+            
+            self.performance_controller = PerformanceController(self.performance_tab)
+            logger.info("性能监控控制器初始化成功")
+            
+            # 连接控制器
             self.ocr_controller.log_message.connect(self.logs_controller.add_log)
             self.monitor_controller.log_message.connect(self.logs_controller.add_log)
             self.task_controller.log_message.connect(self.logs_controller.add_log)
             self.action_controller.log_message.connect(self.logs_controller.add_log)
             
-            # 连接配置变更信号
-            self.config_controller.config_changed.connect(self.ocr_controller.apply_config)
-            self.config_controller.config_changed.connect(self.monitor_controller.apply_config)
-            self.config_controller.config_changed.connect(self.task_controller.apply_config)
-            self.config_controller.config_changed.connect(self.action_controller.apply_config)
+            # 设置控制器引用
+            self.monitor_controller.set_ocr_controller(self.ocr_controller)
+            self.task_controller.set_ocr_controller(self.ocr_controller)
+            self.task_controller.set_monitor_controller(self.monitor_controller)
+            self.task_controller.set_action_controller(self.action_controller)
             
-            logger.info("控制器信号连接成功")
+            # 添加性能监控
+            self._add_performance_metrics()
         except Exception as e:
-            logger.error(f"连接控制器信号失败: {e}")
-            import traceback
+            logger.error(f"初始化控制器失败: {str(e)}")
             logger.error(traceback.format_exc())
+    
+    def _add_performance_metrics(self):
+        """添加性能监控指标"""
+        # 添加OCR识别时间指标
+        self.ocr_controller.text_recognized.connect(
+            lambda text, details: self.performance_controller.add_custom_metric(
+                "OCR识别时间(毫秒)", details.get("recognition_time", 0) * 1000
+            )
+        )
+        
+        # 添加监控刷新时间指标
+        self.monitor_controller.monitor_refreshed.connect(
+            lambda: self.performance_controller.add_custom_metric(
+                "监控刷新时间(毫秒)", self.monitor_controller.get_last_refresh_time() * 1000
+            )
+        )
+        
+        # 添加任务执行时间指标
+        self.task_controller.task_executed.connect(
+            lambda task_id, duration: self.performance_controller.add_custom_metric(
+                "任务执行时间(毫秒)", duration * 1000
+            )
+        )
+    
+    def _connect_signals(self):
+        """连接信号"""
+        # 标签页切换信号
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+        
+        # 配置变更信号
+        self.config_controller.config_changed.connect(self._on_config_changed)
+    
+    def _on_tab_changed(self, index):
+        """标签页切换事件处理"""
+        try:
+            # 更新状态栏
+            tab_name = self.tab_widget.tabText(index)
+            self.status_bar.set_message(f"当前标签页: {tab_name}")
+            
+            # 更新配置面板当前标签页
+            if hasattr(self, 'config_panel') and self.config_panel is not None:
+                self.config_panel.set_current_tab(tab_name, self.tab_widget.widget(index))
+        except Exception as e:
+            logger.error(f"切换标签页时发生错误: {str(e)}")
+            logger.error(traceback.format_exc())
+    
+    def _on_config_changed(self, config):
+        """配置变更事件处理"""
+        # 更新状态栏
+        self.status_bar.set_message("配置已更新")
+    
+    def _save_config(self):
+        """保存配置"""
+        try:
+            self.config_manager.save_config()
+            self.status_bar.set_message("配置已保存")
+            logger.info("配置已保存")
+        except Exception as e:
+            logger.error(f"保存配置失败: {e}")
+            QMessageBox.critical(self, "错误", f"保存配置失败: {e}")
+    
+    def _load_config(self):
+        """加载配置"""
+        try:
+            self.config_manager.load_config()
+            self.status_bar.set_message("配置已加载")
+            logger.info("配置已加载")
+        except Exception as e:
+            logger.error(f"加载配置失败: {e}")
+            QMessageBox.critical(self, "错误", f"加载配置失败: {e}")
+    
+    def _toggle_config_panel(self):
+        """显示/隐藏配置面板"""
+        if self.config_panel.isVisible():
+            self.config_panel.hide()
+        else:
+            self.config_panel.show()
+    
+    def _show_about(self):
+        """显示关于对话框"""
+        QMessageBox.about(
+            self,
+            "关于",
+            "Tesseract OCR监控软件\n\n"
+            "版本: 1.0.0\n"
+            "作者: AI助手\n"
+            "日期: 2025-06-08\n\n"
+            "基于Tesseract OCR引擎的屏幕文本识别和监控软件"
+        )
+    
+    def closeEvent(self, event):
+        """关闭事件处理"""
+        # 停止所有控制器
+        if hasattr(self, 'ocr_controller'):
+            self.ocr_controller.shutdown()
+        
+        if hasattr(self, 'monitor_controller'):
+            self.monitor_controller.shutdown()
+        
+        if hasattr(self, 'task_controller'):
+            self.task_controller.shutdown()
+        
+        if hasattr(self, 'performance_controller'):
+            self.performance_controller.shutdown()
+        
+        # 保存配置
+        try:
+            self.config_manager.save_config()
+            logger.info("配置已保存")
+        except Exception as e:
+            logger.error(f"保存配置失败: {e}")
+        
+        logger.info("应用程序关闭")
+        event.accept()

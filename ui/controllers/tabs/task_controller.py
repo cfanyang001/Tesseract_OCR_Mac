@@ -1,4 +1,4 @@
-from PyQt5.QtCore import QObject, pyqtSlot, Qt, QTimer
+from PyQt5.QtCore import QObject, pyqtSlot, Qt, QTimer, pyqtSignal
 from PyQt5.QtWidgets import QTableWidgetItem, QMessageBox, QInputDialog, QProgressBar, QLabel
 from PyQt5.QtGui import QColor
 
@@ -10,6 +10,10 @@ from loguru import logger
 
 class TaskController(QObject):
     """任务管理标签页控制器，负责连接任务管理标签页与任务管理器"""
+    
+    # 定义信号
+    log_message = pyqtSignal(str)  # 日志消息信号
+    task_executed = pyqtSignal(str, float)  # 任务执行信号 (任务ID, 执行时间)
     
     def __init__(self, task_tab: TaskTab, task_manager: TaskManager = None, 
                  monitor_engine: MonitorEngine = None):

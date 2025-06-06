@@ -2,8 +2,10 @@ import os
 import numpy as np
 import cv2
 import pyautogui
+import time
+import threading
 from PIL import Image
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Union
 from PyQt5.QtCore import QRect
 from loguru import logger
 
@@ -22,30 +24,105 @@ class ScreenCapture:
             'scale_factor': 1.0,     # 缩放因子
             'format': 'RGB',         # 图像格式 (RGB, BGR, GRAY)
             'quality': 95,           # JPEG质量 (1-100)
+            'use_cache': True,       # 是否使用缓存
+            'cache_ttl': 0.2,        # 缓存有效期(秒)
+            'throttle': True,        # 是否启用节流
+            'throttle_interval': 0.1 # 节流间隔(秒)
         }
+        
+        # 缓存
+        self._cache = {}
+        self._cache_timestamps = {}
+        self._last_capture_time = {}
+        
+        # 线程锁，防止并发截图
+        self._lock = threading.RLock()
     
     def set_config(self, config: Dict[str, Any]) -> None:
         """设置配置"""
         self.config.update(config)
+        
+        # 如果禁用缓存，清空缓存
+        if not self.config['use_cache']:
+            with self._lock:
+                self._cache = {}
+                self._cache_timestamps = {}
     
     def get_config(self) -> Dict[str, Any]:
         """获取配置"""
         return self.config.copy()
     
+    def _can_capture(self, key: str) -> bool:
+        """检查是否可以进行新的截图（节流控制）"""
+        if not self.config['throttle']:
+            return True
+            
+        now = time.time()
+        last_time = self._last_capture_time.get(key, 0)
+        
+        if now - last_time >= self.config['throttle_interval']:
+            self._last_capture_time[key] = now
+            return True
+        return False
+    
+    def _get_from_cache(self, key: str) -> Optional[np.ndarray]:
+        """从缓存获取图像"""
+        if not self.config['use_cache']:
+            return None
+            
+        with self._lock:
+            # 检查缓存是否存在且未过期
+            if key in self._cache and key in self._cache_timestamps:
+                timestamp = self._cache_timestamps[key]
+                if time.time() - timestamp <= self.config['cache_ttl']:
+                    logger.debug(f"使用缓存的屏幕截图: {key}")
+                    return self._cache[key].copy()  # 返回副本以避免修改缓存
+        return None
+    
+    def _add_to_cache(self, key: str, image: np.ndarray) -> None:
+        """添加图像到缓存"""
+        if not self.config['use_cache']:
+            return
+            
+        with self._lock:
+            self._cache[key] = image.copy()  # 存储副本以避免外部修改
+            self._cache_timestamps[key] = time.time()
+    
     def capture_screen(self) -> np.ndarray:
         """捕获整个屏幕"""
+        cache_key = "full_screen"
+        
         try:
-            # 使用pyautogui捕获屏幕
-            screenshot = pyautogui.screenshot()
+            # 检查缓存
+            cached_image = self._get_from_cache(cache_key)
+            if cached_image is not None:
+                return cached_image
             
-            # 转换为numpy数组
-            image = np.array(screenshot)
+            # 节流控制
+            if not self._can_capture(cache_key):
+                # 如果不能截图但有缓存，返回最后的缓存（即使已过期）
+                if cache_key in self._cache:
+                    logger.debug("节流控制：使用上次的屏幕截图")
+                    return self._cache[cache_key].copy()
+                # 如果没有缓存，创建空图像
+                return np.zeros((self.screen_height, self.screen_width, 3), dtype=np.uint8)
             
-            # 根据配置进行格式转换
-            image = self._convert_format(image)
-            
-            logger.debug(f"屏幕捕获成功: {image.shape}")
-            return image
+            # 使用线程锁确保一次只有一个截图操作
+            with self._lock:
+                # 使用pyautogui捕获屏幕
+                screenshot = pyautogui.screenshot()
+                
+                # 转换为numpy数组
+                image = np.array(screenshot)
+                
+                # 根据配置进行格式转换
+                image = self._convert_format(image)
+                
+                # 添加到缓存
+                self._add_to_cache(cache_key, image)
+                
+                logger.debug(f"屏幕捕获成功: {image.shape}")
+                return image
         
         except Exception as e:
             logger.error(f"屏幕捕获失败: {e}")
@@ -61,42 +138,71 @@ class ScreenCapture:
         Returns:
             np.ndarray: 区域图像
         """
+        # 获取区域坐标
+        x, y, width, height = rect.x(), rect.y(), rect.width(), rect.height()
+        
+        # 确保坐标在屏幕范围内
+        x = max(0, min(x, self.screen_width - 1))
+        y = max(0, min(y, self.screen_height - 1))
+        width = max(1, min(width, self.screen_width - x))
+        height = max(1, min(height, self.screen_height - y))
+        
+        # 创建缓存键
+        cache_key = f"area_{x}_{y}_{width}_{height}"
+        
         try:
-            # 获取区域坐标
-            x, y, width, height = rect.x(), rect.y(), rect.width(), rect.height()
+            # 检查缓存
+            cached_image = self._get_from_cache(cache_key)
+            if cached_image is not None:
+                return cached_image
             
-            # 确保坐标在屏幕范围内
-            x = max(0, min(x, self.screen_width - 1))
-            y = max(0, min(y, self.screen_height - 1))
-            width = max(1, min(width, self.screen_width - x))
-            height = max(1, min(height, self.screen_height - y))
+            # 节流控制
+            if not self._can_capture(cache_key):
+                # 如果不能截图但有缓存，返回最后的缓存（即使已过期）
+                if cache_key in self._cache:
+                    logger.debug("节流控制：使用上次的区域截图")
+                    return self._cache[cache_key].copy()
+                # 如果没有缓存，尝试从全屏缓存裁剪
+                full_screen = self._get_from_cache("full_screen")
+                if full_screen is not None:
+                    try:
+                        return full_screen[y:y+height, x:x+width].copy()
+                    except:
+                        pass
+                # 如果都不行，创建空图像
+                return np.zeros((height, width, 3), dtype=np.uint8)
             
             logger.debug(f"捕获区域: x={x}, y={y}, width={width}, height={height}")
             
-            # 使用pyautogui捕获区域
-            screenshot = pyautogui.screenshot(region=(x, y, width, height))
-            
-            # 打印图像信息
-            logger.debug(f"截图尺寸: {screenshot.width}x{screenshot.height}")
-            
-            # 转换为numpy数组
-            image = np.array(screenshot)
-            logger.debug(f"numpy数组形状: {image.shape}")
-            
-            # 确保图像有效
-            if image.size == 0 or not (height > 0 and width > 0):
-                logger.error("捕获到的图像无效")
-                return np.zeros((height, width, 3), dtype=np.uint8)
-            
-            # 根据配置进行格式转换
-            image = self._convert_format(image)
-            
-            # 根据配置进行缩放
-            if self.config['scale_factor'] != 1.0:
-                image = self._scale_image(image, self.config['scale_factor'])
-            
-            logger.debug(f"最终图像尺寸: {image.shape}")
-            return image
+            # 使用线程锁确保一次只有一个截图操作
+            with self._lock:
+                # 使用pyautogui捕获区域
+                screenshot = pyautogui.screenshot(region=(x, y, width, height))
+                
+                # 打印图像信息
+                logger.debug(f"截图尺寸: {screenshot.width}x{screenshot.height}")
+                
+                # 转换为numpy数组
+                image = np.array(screenshot)
+                logger.debug(f"numpy数组形状: {image.shape}")
+                
+                # 确保图像有效
+                if image.size == 0 or not (height > 0 and width > 0):
+                    logger.error("捕获到的图像无效")
+                    return np.zeros((height, width, 3), dtype=np.uint8)
+                
+                # 根据配置进行格式转换
+                image = self._convert_format(image)
+                
+                # 根据配置进行缩放
+                if self.config['scale_factor'] != 1.0:
+                    image = self._scale_image(image, self.config['scale_factor'])
+                
+                # 添加到缓存
+                self._add_to_cache(cache_key, image)
+                
+                logger.debug(f"最终图像尺寸: {image.shape}")
+                return image
         
         except Exception as e:
             logger.error(f"区域捕获失败: {str(e)}")
@@ -131,6 +237,13 @@ class ScreenCapture:
             logger.error(f"窗口捕获失败: {e}")
             # 返回空图像和空区域
             return np.zeros((100, 100, 3), dtype=np.uint8), QRect(0, 0, 100, 100)
+    
+    def clear_cache(self) -> None:
+        """清空缓存"""
+        with self._lock:
+            self._cache = {}
+            self._cache_timestamps = {}
+            logger.debug("屏幕捕获缓存已清空")
     
     def _convert_format(self, image: np.ndarray) -> np.ndarray:
         """转换图像格式"""

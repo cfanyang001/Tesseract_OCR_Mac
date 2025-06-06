@@ -1,5 +1,5 @@
 import os
-from PyQt5.QtCore import QObject, QRect, pyqtSlot, QTimer, QBuffer
+from PyQt5.QtCore import QObject, QRect, pyqtSlot, QTimer, QBuffer, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtWidgets import QMessageBox, QInputDialog
 
@@ -16,6 +16,10 @@ import cv2
 
 class OCRController(QObject):
     """OCR标签页控制器，负责连接OCR标签页与OCR处理器"""
+    
+    # 定义信号
+    log_message = pyqtSignal(str)  # 日志消息信号
+    text_recognized = pyqtSignal(str, dict)  # 文本识别信号
     
     def __init__(self, ocr_tab: OCRTab):
         super().__init__()

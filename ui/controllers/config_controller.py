@@ -1,4 +1,4 @@
-from PyQt5.QtCore import QObject, pyqtSlot, Qt
+from PyQt5.QtCore import QObject, pyqtSlot, Qt, pyqtSignal
 from PyQt5.QtWidgets import QComboBox, QLineEdit, QSpinBox
 from loguru import logger
 
@@ -7,15 +7,19 @@ from config.config_manager import ConfigManager
 class ConfigController(QObject):
     """配置控制器，连接配置面板和配置管理器"""
     
-    def __init__(self, config_panel):
+    # 定义信号
+    config_changed = pyqtSignal(str)  # 配置变更信号
+    
+    def __init__(self, config_panel, config_manager=None):
         """初始化配置控制器
         
         Args:
             config_panel: 配置面板组件
+            config_manager: 配置管理器实例，如果为None则创建新实例
         """
         super().__init__()
         self.config_panel = config_panel
-        self.config_manager = ConfigManager()
+        self.config_manager = config_manager if config_manager else ConfigManager()
         self.tab_widgets = {}  # 存储标签页组件的引用
         
         # 连接信号
@@ -88,6 +92,9 @@ class ConfigController(QObject):
             self.apply_config_to_all_tabs()
             
             logger.info(f"切换到配置: {config_name}")
+            
+            # 触发信号
+            self.config_changed.emit(config_name)
         
         except Exception as e:
             logger.error(f"切换配置失败: {e}")

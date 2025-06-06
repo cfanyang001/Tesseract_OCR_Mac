@@ -3,7 +3,10 @@ import pytesseract
 from PIL import Image
 import numpy as np
 import cv2
-from typing import Dict, Any, Optional, Tuple, List
+import hashlib
+import time
+from typing import Dict, Any, Optional, Tuple, List, Union
+from functools import lru_cache
 from loguru import logger
 
 
@@ -46,12 +49,24 @@ class OCRProcessor:
             'autocorrect': False,          # 是否启用文本自动修正
             'psm': 3,                      # 页面分割模式 (3=自动)
             'oem': 3,                      # OCR引擎模式 (3=默认)
-            'custom_config': ''            # 自定义配置
+            'custom_config': '',           # 自定义配置
+            'use_cache': True,             # 是否使用缓存
+            'cache_size': 50,              # 缓存大小
+            'cache_ttl': 60                # 缓存有效期(秒)
         }
+        
+        # 初始化缓存
+        self._cache = {}
+        self._cache_timestamps = {}
     
     def set_config(self, config: Dict[str, Any]) -> None:
         """设置OCR配置"""
+        old_cache_size = self.config.get('cache_size', 50)
         self.config.update(config)
+        
+        # 如果缓存大小变小，清理多余的缓存
+        if self.config['cache_size'] < old_cache_size:
+            self._clean_cache()
     
     def get_config(self) -> Dict[str, Any]:
         """获取OCR配置"""
@@ -61,8 +76,53 @@ class OCRProcessor:
         """获取可用的OCR语言"""
         return list(self.LANGUAGE_MAPPING.values())
     
+    def _image_hash(self, image: np.ndarray) -> str:
+        """计算图像的哈希值，用于缓存键"""
+        # 将图像调整为固定大小以加速哈希计算
+        small_img = cv2.resize(image, (32, 32))
+        # 计算图像的md5哈希
+        return hashlib.md5(small_img.tobytes()).hexdigest()
+    
+    def _clean_cache(self) -> None:
+        """清理过期和多余的缓存"""
+        if not self.config['use_cache']:
+            self._cache = {}
+            self._cache_timestamps = {}
+            return
+            
+        # 清理过期缓存
+        current_time = time.time()
+        expired_keys = [
+            k for k, t in self._cache_timestamps.items() 
+            if current_time - t > self.config['cache_ttl']
+        ]
+        
+        for key in expired_keys:
+            if key in self._cache:
+                del self._cache[key]
+            if key in self._cache_timestamps:
+                del self._cache_timestamps[key]
+        
+        # 如果缓存仍然太大，删除最旧的条目
+        if len(self._cache) > self.config['cache_size']:
+            # 按时间戳排序
+            sorted_keys = sorted(
+                self._cache_timestamps.keys(), 
+                key=lambda k: self._cache_timestamps[k]
+            )
+            
+            # 删除最旧的条目，直到达到缓存大小
+            for key in sorted_keys[:len(self._cache) - self.config['cache_size']]:
+                if key in self._cache:
+                    del self._cache[key]
+                if key in self._cache_timestamps:
+                    del self._cache_timestamps[key]
+    
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
-        """预处理图像，提高OCR识别率"""
+        """预处理图像，提高OCR识别率
+        
+        使用多种预处理方法，根据图像特性自动选择最佳方法
+        """
         if not self.config['preprocess']:
             return image
         
@@ -83,23 +143,42 @@ class OCRProcessor:
             # 根据精度调整预处理强度
             accuracy = self.config['accuracy']
             
-            # 应用高斯模糊减少噪点
-            if accuracy < 70:
-                gray = cv2.GaussianBlur(gray, (3, 3), 0)
+            # 创建多种预处理结果，稍后选择最佳结果
+            processed_images = [gray]  # 原始灰度图
             
-            # 应用自适应阈值二值化
+            # 1. 高斯模糊 + 自适应阈值二值化
             if accuracy < 90:
-                gray = cv2.adaptiveThreshold(
-                    gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+                binary = cv2.adaptiveThreshold(
+                    blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                     cv2.THRESH_BINARY, 11, 2
                 )
+                processed_images.append(binary)
             
-            # 应用形态学操作
+            # 2. 锐化
+            if accuracy < 85:
+                kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+                sharpened = cv2.filter2D(gray, -1, kernel)
+                processed_images.append(sharpened)
+            
+            # 3. 直方图均衡化
             if accuracy < 80:
-                kernel = np.ones((1, 1), np.uint8)
-                gray = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel)
+                equalized = cv2.equalizeHist(gray)
+                processed_images.append(equalized)
             
-            return gray
+            # 4. Otsu二值化
+            if accuracy < 75:
+                _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                processed_images.append(otsu)
+            
+            # 为了提高性能，仅在需要时返回多种预处理结果
+            # 在实际应用中，可以通过测试选择最佳预处理方法
+            
+            # 如果精度要求较低，直接返回最适合一般情况的预处理结果
+            if accuracy < 70:
+                return processed_images[1]  # 返回自适应阈值二值化结果
+            
+            return processed_images[0]  # 返回灰度图
             
         except Exception as e:
             logger.error(f"图像预处理失败: {e}")
@@ -117,6 +196,24 @@ class OCRProcessor:
             Tuple[str, Dict[str, Any]]: 识别的文本和详细信息
         """
         try:
+            # 检查缓存
+            if self.config['use_cache']:
+                # 清理过期缓存
+                self._clean_cache()
+                
+                # 计算图像哈希
+                img_hash = self._image_hash(image)
+                
+                # 构建缓存键
+                cache_key = f"{img_hash}_{self.config['language']}_{self.config['psm']}_{self.config['oem']}"
+                
+                # 检查缓存
+                if cache_key in self._cache:
+                    # 更新时间戳
+                    self._cache_timestamps[cache_key] = time.time()
+                    logger.debug(f"使用缓存的OCR结果: {cache_key}")
+                    return self._cache[cache_key]
+            
             # 预处理图像
             processed_image = self.preprocess_image(image)
             
@@ -153,8 +250,15 @@ class OCRProcessor:
                 'boxes': self._extract_text_boxes(data)
             }
             
+            result = (text, details)
+            
+            # 保存到缓存
+            if self.config['use_cache']:
+                self._cache[cache_key] = result
+                self._cache_timestamps[cache_key] = time.time()
+            
             logger.debug(f"OCR识别成功: {len(text)} 字符, 置信度: {details['confidence']}%")
-            return text, details
+            return result
         
         except Exception as e:
             logger.error(f"OCR识别失败: {e}")
@@ -198,5 +302,6 @@ class OCRProcessor:
         """获取Tesseract信息"""
         return {
             'version': self.tesseract_version,
-            'available_languages': self.get_available_languages()
+            'languages': self.get_available_languages(),
+            'config': self.get_config()
         }

@@ -1,4 +1,4 @@
-from PyQt5.QtCore import QObject, pyqtSlot, Qt, QTimer, QPoint, QEvent
+from PyQt5.QtCore import QObject, pyqtSlot, Qt, QTimer, QPoint, QEvent, pyqtSignal
 from PyQt5.QtWidgets import (
     QMessageBox, QPushButton, QLabel, QComboBox, QLineEdit, QCheckBox, 
     QTableWidgetItem, QTableWidget, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout, QApplication
@@ -11,6 +11,10 @@ from core.rule_matcher import Rule
 
 class MonitorController(QObject):
     """监控标签页控制器，负责连接监控标签页与OCR控制器"""
+    
+    # 定义信号
+    log_message = pyqtSignal(str)  # 日志消息信号
+    monitor_refreshed = pyqtSignal()  # 监控刷新信号
     
     def __init__(self, monitor_tab):
         super().__init__()
@@ -1243,9 +1247,11 @@ class MonitorController(QObject):
             logger.error(traceback.format_exc())
 
     def set_log_model(self, log_model):
-        """设置日志模型
-        
-        Args:
-            log_model: 日志模型
-        """
+        """设置日志模型"""
         self.log_model = log_model
+        
+    def get_last_refresh_time(self):
+        """获取最后刷新时间（秒）"""
+        if hasattr(self, 'last_refresh_time'):
+            return self.last_refresh_time
+        return 0.0

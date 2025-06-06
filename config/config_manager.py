@@ -269,12 +269,24 @@ class ConfigManager:
         Returns:
             bool: 是否成功设置
         """
-        if config_name in self.configs:
-            self.current_config = config_name
-            # 保存最后使用的配置
-            self.save_last_config()
-            logger.info(f"当前配置已设置为: {config_name}")
-            return True
-        else:
-            logger.warning(f"配置不存在: {config_name}")
+        if config_name not in self.configs:
+            logger.warning(f"配置 {config_name} 不存在，无法设置为当前配置")
             return False
+        
+        self.current_config = config_name
+        self.save_last_config()
+        logger.info(f"当前配置已设置为: {config_name}")
+        return True
+    
+    def load_config(self):
+        """加载当前配置
+        
+        Returns:
+            dict: 当前配置
+        """
+        if self.current_config not in self.configs:
+            logger.warning(f"当前配置 {self.current_config} 不存在，加载默认配置")
+            self.current_config = "默认配置"
+        
+        logger.info(f"加载配置: {self.current_config}")
+        return self.configs[self.current_config]
