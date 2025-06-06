@@ -19,9 +19,13 @@ class StatusBar(QStatusBar):
         
         self.task_status_label = QLabel("任务: 0")
         
+        # 创建消息标签
+        self.message_label = QLabel("")
+        
         # 添加标签到布局
         self.layout.addWidget(self.ocr_status_label)
         self.layout.addWidget(self.task_status_label)
+        self.layout.addWidget(self.message_label)
         
         # 添加弹簧
         self.layout.addStretch()
@@ -45,3 +49,14 @@ class StatusBar(QStatusBar):
     def update_task_count(self, count=0):
         """更新任务数量"""
         self.task_status_label.setText(f"任务: {count}")
+        
+    def set_message(self, message, timeout=5000):
+        """设置状态栏消息
+        
+        Args:
+            message: 要显示的消息
+            timeout: 消息显示时间(毫秒)，默认5秒
+        """
+        self.message_label.setText(message)
+        # 使用QStatusBar原生的showMessage方法在状态栏临时显示消息
+        self.showMessage(message, timeout)
