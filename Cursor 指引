@@ -1,3 +1,4 @@
 本项目运行的虚拟环境是：/Users/yangyufeng/Coding/2025/Tesseract_OCR/venv
+确保运行代码的时候在此环境。
 已经创建好了不要重复创建虚拟环境
 Gui主程序是通过/Users/yangyufeng/Coding/2025/Tesseract_OCR/start.sh启动的
