@@ -337,44 +337,130 @@ class SmartClick(QObject):
             return False
     
     def _calculate_text_similarity(self, text1: str, text2: str) -> float:
-        """计算文本相似度
+        """计算两个文本的相似度
         
-        简单实现，可以替换为更复杂的算法
+        使用多种算法计算文本相似度，并返回最高的相似度分数
         
         Args:
-            text1: 文本1
-            text2: 文本2
+            text1: 第一个文本
+            text2: 第二个文本
             
         Returns:
-            float: 相似度 (0.0-1.0)
+            float: 相似度分数 (0.0-1.0)
         """
-        # 简化为小写并去除空白
-        text1 = text1.lower().strip()
-        text2 = text2.lower().strip()
+        # 如果任一文本为空，返回0
+        if not text1 or not text2:
+            return 0.0
         
-        # 检查完全匹配
+        # 转换为小写进行比较
+        text1 = text1.lower()
+        text2 = text2.lower()
+        
+        # 1. 计算精确匹配
         if text1 == text2:
             return 1.0
         
-        # 检查包含关系
+        # 2. 计算包含关系
         if text1 in text2:
             return 0.9
         if text2 in text1:
             return 0.8
         
-        # 计算编辑距离相似度
+        # 3. 计算Levenshtein编辑距离
         try:
             import Levenshtein
-            max_len = max(len(text1), len(text2))
-            if max_len == 0:
-                return 0.0
-            distance = Levenshtein.distance(text1, text2)
-            return 1.0 - (distance / max_len)
+            lev_similarity = 1.0 - Levenshtein.distance(text1, text2) / max(len(text1), len(text2))
         except ImportError:
-            # 如果没有Levenshtein库，使用简单的字符匹配率
-            common_chars = sum(1 for c in text1 if c in text2)
-            total_chars = len(text1) + len(text2)
-            return (2 * common_chars) / total_chars if total_chars > 0 else 0.0
+            # 如果没有Levenshtein库，使用简化的编辑距离计算
+            lev_similarity = self._simple_edit_distance(text1, text2)
+        
+        # 4. 计算词集合Jaccard相似度
+        tokens1 = set(text1.split())
+        tokens2 = set(text2.split())
+        
+        if not tokens1 or not tokens2:
+            jaccard_similarity = 0.0
+        else:
+            intersection = len(tokens1.intersection(tokens2))
+            union = len(tokens1.union(tokens2))
+            jaccard_similarity = intersection / union if union > 0 else 0.0
+        
+        # 5. 计算N-gram相似度(字符级)
+        ngram_similarity = self._ngram_similarity(text1, text2)
+        
+        # 返回最高的相似度
+        return max([lev_similarity, jaccard_similarity, ngram_similarity])
+    
+    def _simple_edit_distance(self, s1: str, s2: str) -> float:
+        """简化的编辑距离算法
+        
+        当Levenshtein库不可用时的替代方案
+        
+        Args:
+            s1: 第一个字符串
+            s2: 第二个字符串
+            
+        Returns:
+            float: 相似度分数 (0.0-1.0)
+        """
+        # 创建矩阵
+        m, n = len(s1), len(s2)
+        if m == 0 or n == 0:
+            return 0.0
+            
+        # 创建矩阵
+        matrix = [[0 for _ in range(n + 1)] for _ in range(m + 1)]
+        
+        # 初始化第一行和第一列
+        for i in range(m + 1):
+            matrix[i][0] = i
+        for j in range(n + 1):
+            matrix[0][j] = j
+            
+        # 计算编辑距离
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if s1[i-1] == s2[j-1]:
+                    matrix[i][j] = matrix[i-1][j-1]
+                else:
+                    matrix[i][j] = min(
+                        matrix[i-1][j] + 1,    # 删除
+                        matrix[i][j-1] + 1,    # 插入
+                        matrix[i-1][j-1] + 1   # 替换
+                    )
+        
+        # 计算相似度
+        distance = matrix[m][n]
+        max_len = max(m, n)
+        return 1.0 - (distance / max_len) if max_len > 0 else 0.0
+    
+    def _ngram_similarity(self, s1: str, s2: str, n: int = 2) -> float:
+        """计算N-gram相似度
+        
+        Args:
+            s1: 第一个字符串
+            s2: 第二个字符串
+            n: N-gram大小，默认为2(bigram)
+            
+        Returns:
+            float: 相似度分数 (0.0-1.0)
+        """
+        if len(s1) < n or len(s2) < n:
+            return 0.0
+            
+        # 创建n-gram
+        s1_ngrams = [s1[i:i+n] for i in range(len(s1) - n + 1)]
+        s2_ngrams = [s2[i:i+n] for i in range(len(s2) - n + 1)]
+        
+        # 计算交集和并集大小
+        s1_ngrams_set = set(s1_ngrams)
+        s2_ngrams_set = set(s2_ngrams)
+        
+        intersection = len(s1_ngrams_set.intersection(s2_ngrams_set))
+        union = len(s1_ngrams_set.union(s2_ngrams_set))
+        
+        # 计算相似度
+        return intersection / union if union > 0 else 0.0
     
     def _confirm_click(self, point: QPoint, target_desc: str) -> bool:
         """点击前确认

@@ -103,20 +103,29 @@ class OCRProcessor:
             if key in self._cache_timestamps:
                 del self._cache_timestamps[key]
         
-        # 如果缓存仍然太大，删除最旧的条目
+        # 如果缓存仍然太大，删除访问频率最低的条目
         if len(self._cache) > self.config['cache_size']:
-            # 按时间戳排序
+            # 创建用于跟踪缓存项访问次数的字典(如果不存在)
+            if not hasattr(self, '_cache_hits'):
+                self._cache_hits = {k: 0 for k in self._cache.keys()}
+                
+            # 按访问频率排序
             sorted_keys = sorted(
-                self._cache_timestamps.keys(), 
-                key=lambda k: self._cache_timestamps[k]
+                self._cache_hits.keys(), 
+                key=lambda k: (self._cache_hits.get(k, 0), -self._cache_timestamps.get(k, 0))
             )
             
-            # 删除最旧的条目，直到达到缓存大小
+            # 删除访问频率最低的条目，直到达到缓存大小
             for key in sorted_keys[:len(self._cache) - self.config['cache_size']]:
                 if key in self._cache:
                     del self._cache[key]
                 if key in self._cache_timestamps:
                     del self._cache_timestamps[key]
+                if key in self._cache_hits:
+                    del self._cache_hits[key]
+            
+            # 记录缓存清理事件
+            logger.debug(f"缓存清理完成: 当前缓存大小 {len(self._cache)}")
     
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
         """预处理图像，提高OCR识别率
@@ -198,71 +207,101 @@ class OCRProcessor:
         try:
             # 检查缓存
             if self.config['use_cache']:
-                # 清理过期缓存
-                self._clean_cache()
-                
-                # 计算图像哈希
-                img_hash = self._image_hash(image)
-                
-                # 构建缓存键
-                cache_key = f"{img_hash}_{self.config['language']}_{self.config['psm']}_{self.config['oem']}"
+                # 计算图像哈希值
+                image_hash = self._image_hash(image)
                 
                 # 检查缓存
-                if cache_key in self._cache:
+                if image_hash in self._cache:
+                    # 更新访问统计
+                    if not hasattr(self, '_cache_hits'):
+                        self._cache_hits = {}
+                    if not hasattr(self, '_cache_stats'):
+                        self._cache_stats = {'hits': 0, 'misses': 0, 'hit_ratio': 0.0}
+                        
+                    self._cache_hits[image_hash] = self._cache_hits.get(image_hash, 0) + 1
+                    self._cache_stats['hits'] += 1
+                    self._cache_stats['hit_ratio'] = self._cache_stats['hits'] / (self._cache_stats['hits'] + self._cache_stats['misses'])
+                    
                     # 更新时间戳
-                    self._cache_timestamps[cache_key] = time.time()
-                    logger.debug(f"使用缓存的OCR结果: {cache_key}")
-                    return self._cache[cache_key]
+                    self._cache_timestamps[image_hash] = time.time()
+                    
+                    logger.debug(f"OCR缓存命中: {self._cache_stats['hit_ratio']:.2f}")
+                    return self._cache[image_hash]
+                else:
+                    # 缓存未命中统计
+                    if hasattr(self, '_cache_stats'):
+                        self._cache_stats['misses'] += 1
+                        self._cache_stats['hit_ratio'] = self._cache_stats['hits'] / (self._cache_stats['hits'] + self._cache_stats['misses'])
             
             # 预处理图像
-            processed_image = self.preprocess_image(image)
-            
+            if self.config['preprocess']:
+                image = self.preprocess_image(image)
+                
             # 构建Tesseract配置
-            if config is None:
-                config = f'--psm {self.config["psm"]} --oem {self.config["oem"]}'
-                if self.config['custom_config']:
-                    config += f' {self.config["custom_config"]}'
-            
+            tesseract_config = f"--psm {self.config['psm']} --oem {self.config['oem']}"
+            if config:
+                tesseract_config = f"{tesseract_config} {config}"
+            if self.config['custom_config']:
+                tesseract_config = f"{tesseract_config} {self.config['custom_config']}"
+                
+            # 转换为PIL图像
+            if len(image.shape) == 2:  # 灰度图像
+                pil_image = Image.fromarray(image)
+            else:  # 彩色图像
+                pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+                
             # 识别文本
+            start_time = time.time()
             text = pytesseract.image_to_string(
-                processed_image,
+                pil_image,
                 lang=self.config['language'],
-                config=config
+                config=tesseract_config
             )
             
-            # 获取详细信息
+            # 获取识别详情
             data = pytesseract.image_to_data(
-                processed_image,
+                pil_image,
                 lang=self.config['language'],
-                config=config,
+                config=tesseract_config,
                 output_type=pytesseract.Output.DICT
             )
             
-            # 文本自动修正
-            if self.config['autocorrect']:
+            # 计算置信度和处理时间
+            processing_time = time.time() - start_time
+            confidence = self._calculate_avg_confidence(data)
+            
+            # 自动修正文本(如果启用)
+            if self.config['autocorrect'] and text:
                 text = self.autocorrect_text(text)
+                
+            # 提取文本框
+            boxes = self._extract_text_boxes(data)
             
-            # 构建详细信息
-            details = {
-                'confidence': self._calculate_avg_confidence(data),
-                'word_count': len(data['text']),
-                'char_count': sum(len(word) for word in data['text'] if word.strip()),
-                'boxes': self._extract_text_boxes(data)
-            }
+            # 构建结果
+            result = (text, {
+                'confidence': confidence,
+                'boxes': boxes,
+                'processing_time': processing_time,
+                'language': self.config['language'],
+                'psm': self.config['psm'],
+                'oem': self.config['oem']
+            })
             
-            result = (text, details)
-            
-            # 保存到缓存
+            # 缓存结果
             if self.config['use_cache']:
-                self._cache[cache_key] = result
-                self._cache_timestamps[cache_key] = time.time()
+                image_hash = self._image_hash(image)
+                self._cache[image_hash] = result
+                self._cache_timestamps[image_hash] = time.time()
+                
+                # 定期清理缓存
+                if len(self._cache) % 10 == 0:
+                    self._clean_cache()
             
-            logger.debug(f"OCR识别成功: {len(text)} 字符, 置信度: {details['confidence']}%")
             return result
-        
+            
         except Exception as e:
-            logger.error(f"OCR识别失败: {e}")
-            return "", {'confidence': 0, 'word_count': 0, 'char_count': 0, 'boxes': []}
+            logger.error(f"OCR识别错误: {e}")
+            return "", {'confidence': 0.0, 'boxes': [], 'error': str(e)}
     
     def autocorrect_text(self, text: str) -> str:
         """自动修正文本
@@ -305,3 +344,13 @@ class OCRProcessor:
             'languages': self.get_available_languages(),
             'config': self.get_config()
         }
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """获取缓存统计信息"""
+        stats = getattr(self, '_cache_stats', {'hits': 0, 'misses': 0, 'hit_ratio': 0.0})
+        stats.update({
+            'size': len(getattr(self, '_cache', {})),
+            'max_size': self.config['cache_size'],
+            'ttl': self.config['cache_ttl']
+        })
+        return stats

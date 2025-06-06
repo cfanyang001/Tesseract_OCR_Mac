@@ -14,10 +14,13 @@ numpy==1.24.3
 # 系统交互
 pyautogui==0.9.54
 pynput==1.7.6
+keyboard==0.13.5
 
 # 工具库
 python-dotenv==1.0.0
 loguru==0.7.0
+python-Levenshtein==0.23.0
+importlib-metadata==6.8.0
 
 # 测试
 pytest==7.4.0
