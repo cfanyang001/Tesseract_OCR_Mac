@@ -7,5 +7,20 @@
     "retry_failed_tasks": true,
     "max_retries": 3,
     "retry_delay": 60.0
+  },
+  "ocr": {
+    "language": "chi_sim",
+    "psm": "3",
+    "oem": "3",
+    "accuracy": 80,
+    "preprocess": true,
+    "autocorrect": false,
+    "screen_area": {
+      "x": 821,
+      "y": 593,
+      "width": 274,
+      "height": 102,
+      "is_selected": true
+    }
   }
 }

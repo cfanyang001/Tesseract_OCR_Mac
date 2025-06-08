@@ -7,10 +7,10 @@
     "preprocess": true,
     "autocorrect": false,
     "screen_area": {
-      "x": 1620,
-      "y": 686,
-      "width": 300,
-      "height": 158,
+      "x": 1160,
+      "y": 518,
+      "width": 760,
+      "height": 70,
       "is_selected": true
     }
   },

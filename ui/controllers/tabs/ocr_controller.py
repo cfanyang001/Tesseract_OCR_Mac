@@ -1,7 +1,12 @@
 import os
-from PyQt5.QtCore import QObject, QRect, pyqtSlot, QTimer, QBuffer, pyqtSignal
+import time
+import tempfile
+import cv2
+import numpy as np
+from typing import Dict, Any, Optional, List, Tuple
+from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel, QPushButton
+from PyQt5.QtCore import Qt, QObject, pyqtSignal, pyqtSlot, QRect, QTimer
 from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtWidgets import QMessageBox, QInputDialog
 
 from core.ocr_processor import OCRProcessor
 from core.screen_capture import ScreenCapture
@@ -10,7 +15,6 @@ from ui.components.tabs.ocr_tab import OCRTab
 from ui.components.area_selector_mac import MacScreenCaptureSelector
 
 from loguru import logger
-import tempfile
 import cv2
 
 
@@ -406,82 +410,110 @@ class OCRController(QObject):
                 )
                 return
             
-            # 先更新预览，确保使用最新的屏幕内容
-            self.update_preview()
+            # 这里不再调用update_preview()方法，而是使用选择区域时保存的截图
+            if not self.current_screenshot or not os.path.exists(self.current_screenshot):
+                # 如果没有当前截图，才更新预览
+                logger.info("没有可用的截图，将捕获新的屏幕区域")
+                self.update_preview()
+            else:
+                logger.info(f"使用已有的截图进行OCR测试: {self.current_screenshot}")
             
-            # 使用文本识别器识别当前区域
-            text, details = self.text_recognizer.recognize_area(self.current_rect)
+            # 检查是否有有效的截图
+            if not self.current_screenshot or not os.path.exists(self.current_screenshot):
+                logger.error("没有有效的截图用于OCR识别")
+                QMessageBox.warning(
+                    self.ocr_tab,
+                    "错误",
+                    "获取屏幕区域失败，请重新选择区域"
+                )
+                return
             
-            # 保存识别结果
-            self.last_ocr_text = text
-            self.last_ocr_details = details
-            
-            # 更新结果显示
-            result_text = self.ocr_tab.right_panel.findChild(
-                QObject, "result_text"
-            )
-            if result_text:
-                result_text.setPlainText(text)
-            
-            # 更新详细信息
-            confidence_label = self.ocr_tab.right_panel.findChild(
-                QObject, "confidence_label"
-            )
-            if confidence_label:
-                confidence = details.get('confidence', 0)
-                confidence_label.setText(f"置信度: {confidence}%")
-            
-            word_count_label = self.ocr_tab.right_panel.findChild(
-                QObject, "word_count_label"
-            )
-            if word_count_label:
-                word_count = details.get('word_count', 0)
-                word_count_label.setText(f"词数: {word_count}")
-            
-            char_count_label = self.ocr_tab.right_panel.findChild(
-                QObject, "char_count_label"
-            )
-            if char_count_label:
-                char_count = details.get('char_count', 0)
-                char_count_label.setText(f"字符数: {char_count}")
+            # 直接使用截图文件进行OCR识别，而不是使用区域坐标
+            try:
+                # 读取保存的图像文件
+                import cv2
+                image = cv2.imread(self.current_screenshot)
                 
-            # 显示文本框位置
-            preview_label = self.ocr_tab.right_panel.findChild(
-                QObject, "preview_label"
-            )
-            if preview_label and self.current_screenshot:
-                # 加载预览图像
-                pixmap = QPixmap(self.current_screenshot)
+                # 使用OCR处理器直接识别图像
+                text, details = self.ocr_processor.recognize_text(image)
                 
-                # 创建带有文本框的图像
-                if 'boxes' in details and pixmap and not pixmap.isNull():
-                    # 转换为OpenCV图像
-                    image = self.pixmap_to_cv2(pixmap)
+                # 保存识别结果
+                self.last_ocr_text = text
+                self.last_ocr_details = details
+                
+                # 更新结果显示
+                result_text = self.ocr_tab.right_panel.findChild(
+                    QObject, "result_text"
+                )
+                if result_text:
+                    result_text.setPlainText(text)
+                
+                # 更新详细信息
+                confidence_label = self.ocr_tab.right_panel.findChild(
+                    QObject, "confidence_label"
+                )
+                if confidence_label:
+                    confidence = details.get('confidence', 0)
+                    confidence_label.setText(f"置信度: {confidence}%")
+                
+                word_count_label = self.ocr_tab.right_panel.findChild(
+                    QObject, "word_count_label"
+                )
+                if word_count_label:
+                    word_count = details.get('word_count', 0)
+                    word_count_label.setText(f"词数: {word_count}")
+                
+                char_count_label = self.ocr_tab.right_panel.findChild(
+                    QObject, "char_count_label"
+                )
+                if char_count_label:
+                    char_count = details.get('char_count', 0)
+                    char_count_label.setText(f"字符数: {char_count}")
                     
-                    # 在图像上绘制文本框
-                    boxes = details.get('boxes', [])
-                    for box in boxes:
-                        x, y, w, h = box['x'], box['y'], box['width'], box['height']
-                        # 调整坐标到预览图像的大小
-                        scale_x = pixmap.width() / self.current_rect.width()
-                        scale_y = pixmap.height() / self.current_rect.height()
-                        
-                        x = int(x * scale_x)
-                        y = int(y * scale_y)
-                        w = int(w * scale_x)
-                        h = int(h * scale_y)
-                        
-                        # 绘制矩形
-                        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                        
-                    # 转换回QPixmap
-                    highlighted_pixmap = self.cv2_to_pixmap(image)
+                # 显示文本框位置
+                preview_label = self.ocr_tab.right_panel.findChild(
+                    QObject, "preview_label"
+                )
+                if preview_label and self.current_screenshot:
+                    # 加载预览图像
+                    pixmap = QPixmap(self.current_screenshot)
                     
-                    # 显示图像
-                    preview_label.setPixmap(highlighted_pixmap)
-                    preview_label.setScaledContents(True)
-            
-            logger.info(f"OCR测试成功，识别文本: {len(text)} 字符")
+                    # 创建带有文本框的图像
+                    if 'boxes' in details and pixmap and not pixmap.isNull():
+                        # 转换为OpenCV图像
+                        image_with_boxes = image.copy()
+                        
+                        # 在图像上绘制文本框
+                        boxes = details.get('boxes', [])
+                        for box in boxes:
+                            x, y, w, h = box['x'], box['y'], box['width'], box['height']
+                            
+                            # 绘制矩形
+                            cv2.rectangle(image_with_boxes, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            
+                        # 转换回QPixmap
+                        highlighted_pixmap = self.cv2_to_pixmap(image_with_boxes)
+                        
+                        # 显示图像
+                        preview_label.setPixmap(highlighted_pixmap)
+                        preview_label.setScaledContents(True)
+                
+                logger.info(f"OCR测试成功，识别文本: {len(text)} 字符")
+                
+            except Exception as ocr_error:
+                logger.error(f"OCR识别失败: {ocr_error}")
+                import traceback
+                logger.error(traceback.format_exc())
+                # 回退到使用区域识别
+                text, details = self.text_recognizer.recognize_area(self.current_rect)
+                if text:
+                    logger.info("使用区域识别方法成功")
+                    # 更新结果显示
+                    result_text = self.ocr_tab.right_panel.findChild(
+                        QObject, "result_text"
+                    )
+                    if result_text:
+                        result_text.setPlainText(text)
             
         except Exception as e:
             logger.error(f"OCR测试失败: {e}")
