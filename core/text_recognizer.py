@@ -148,13 +148,72 @@ class TextRecognizer(QObject):
         try:
             start_time = time.time()
             
-            # 检查缓存
-            cached_result = self._get_from_cache(rect)
-            if cached_result is not None:
-                return cached_result
+            # 获取精确的区域坐标 - 使用原始传入的坐标
+            x, y, width, height = rect.x(), rect.y(), rect.width(), rect.height()
+            logger.info(f"文本识别: 使用精确区域坐标 x={x}, y={y}, width={width}, height={height}")
             
-            # 捕获屏幕区域
-            image = self.screen_capture.capture_area(rect)
+            # 直接使用系统命令进行截图，避免使用屏幕捕获器的中间处理
+            try:
+                import tempfile
+                import subprocess
+                import cv2
+                import os
+                
+                # 创建临时文件
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
+                    temp_filename = temp_file.name
+                
+                logger.debug(f"文本识别: 使用系统命令直接截图，保存到 {temp_filename}")
+                
+                # 使用screencapture命令捕获精确区域
+                result = subprocess.run([
+                    'screencapture',
+                    '-x',  # 无声
+                    '-R', f"{x},{y},{width},{height}",  # 区域格式：x,y,width,height
+                    temp_filename
+                ], check=True)
+                
+                # 检查文件是否存在和有效
+                if not os.path.exists(temp_filename) or os.path.getsize(temp_filename) == 0:
+                    raise Exception("系统截图命令未能创建有效的图像文件")
+                    
+                # 读取图像
+                image = cv2.imread(temp_filename)
+                
+                # 转换为RGB格式
+                if image is not None:
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    logger.debug(f"文本识别: 系统命令截图成功，图像大小: {image.shape}")
+                else:
+                    raise Exception("无法读取截图文件")
+                
+                # 检查图像尺寸是否与请求区域一致
+                if image.shape[1] != width or image.shape[0] != height:
+                    logger.warning(f"文本识别: 图像尺寸({image.shape[1]}x{image.shape[0]})与请求区域尺寸({width}x{height})不匹配，调整大小")
+                    image = cv2.resize(image, (width, height))
+                
+                # 删除临时文件
+                try:
+                    os.remove(temp_filename)
+                except Exception as e:
+                    logger.warning(f"删除临时文件失败: {e}")
+                
+            except Exception as e:
+                logger.warning(f"使用系统命令截图失败: {e}，尝试使用屏幕捕获器")
+                # 如果系统命令失败，回退到屏幕捕获器
+                # 配置屏幕捕获器，禁用缓存和HiDPI补偿
+                original_config = self.screen_capture.get_config()
+                capture_config = original_config.copy()
+                capture_config['use_cache'] = False
+                capture_config['throttle'] = False
+                capture_config['compensate_dpi'] = False
+                self.screen_capture.set_config(capture_config)
+                
+                # 捕获指定区域
+                image = self.screen_capture.capture_area(rect)
+                
+                # 恢复原始配置
+                self.screen_capture.set_config(original_config)
             
             # 预处理图像
             processed_image = preprocess_for_ocr(image, self.config['preprocessing_steps'])
@@ -179,9 +238,7 @@ class TextRecognizer(QObject):
             # 更新缓存
             self._update_cache(text, details)
             
-            # 添加到文本缓存
-            self._add_to_cache(rect, text, details)
-            
+            # 不使用缓存，避免区域偏移问题
             # 更新状态
             self._last_text = text
             self._last_capture_time = time.time()
@@ -190,7 +247,15 @@ class TextRecognizer(QObject):
             recognition_time = time.time() - start_time
             self._update_performance_metrics(recognition_time)
             
-            logger.debug(f"文本识别成功: {len(text)} 字符，耗时: {recognition_time:.3f}秒")
+            # 添加区域信息到结果中
+            details['rect'] = {
+                'x': x,
+                'y': y,
+                'width': width,
+                'height': height
+            }
+            
+            logger.debug(f"文本识别成功: {len(text)} 字符，区域: ({x},{y},{width},{height})，耗时: {recognition_time:.3f}秒")
             return text, details
         
         except Exception as e:

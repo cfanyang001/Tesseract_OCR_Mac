@@ -205,33 +205,11 @@ class OCRProcessor:
             Tuple[str, Dict[str, Any]]: 识别的文本和详细信息
         """
         try:
-            # 检查缓存
-            if self.config['use_cache']:
-                # 计算图像哈希值
-                image_hash = self._image_hash(image)
-                
-                # 检查缓存
-                if image_hash in self._cache:
-                    # 更新访问统计
-                    if not hasattr(self, '_cache_hits'):
-                        self._cache_hits = {}
-                    if not hasattr(self, '_cache_stats'):
-                        self._cache_stats = {'hits': 0, 'misses': 0, 'hit_ratio': 0.0}
-                        
-                    self._cache_hits[image_hash] = self._cache_hits.get(image_hash, 0) + 1
-                    self._cache_stats['hits'] += 1
-                    self._cache_stats['hit_ratio'] = self._cache_stats['hits'] / (self._cache_stats['hits'] + self._cache_stats['misses'])
-                    
-                    # 更新时间戳
-                    self._cache_timestamps[image_hash] = time.time()
-                    
-                    logger.debug(f"OCR缓存命中: {self._cache_stats['hit_ratio']:.2f}")
-                    return self._cache[image_hash]
-                else:
-                    # 缓存未命中统计
-                    if hasattr(self, '_cache_stats'):
-                        self._cache_stats['misses'] += 1
-                        self._cache_stats['hit_ratio'] = self._cache_stats['hits'] / (self._cache_stats['hits'] + self._cache_stats['misses'])
+            # 记录图像尺寸，便于调试
+            logger.debug(f"OCR处理图像尺寸: {image.shape}")
+            
+            # 完全禁用缓存，确保每次都是实时处理
+            use_cache = False
             
             # 预处理图像
             if self.config['preprocess']:
@@ -250,6 +228,9 @@ class OCRProcessor:
             else:  # 彩色图像
                 pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
                 
+            # 记录PIL图像大小
+            logger.debug(f"OCR处理PIL图像大小: {pil_image.size}")
+            
             # 识别文本
             start_time = time.time()
             text = pytesseract.image_to_string(
@@ -284,23 +265,20 @@ class OCRProcessor:
                 'processing_time': processing_time,
                 'language': self.config['language'],
                 'psm': self.config['psm'],
-                'oem': self.config['oem']
+                'oem': self.config['oem'],
+                'image_size': {
+                    'width': image.shape[1],
+                    'height': image.shape[0]
+                } if image is not None and len(image.shape) >= 2 else None
             })
             
-            # 缓存结果
-            if self.config['use_cache']:
-                image_hash = self._image_hash(image)
-                self._cache[image_hash] = result
-                self._cache_timestamps[image_hash] = time.time()
-                
-                # 定期清理缓存
-                if len(self._cache) % 10 == 0:
-                    self._clean_cache()
-            
+            logger.debug(f"OCR识别完成: 置信度 {confidence}%, 处理时间 {processing_time:.3f}秒")
             return result
             
         except Exception as e:
             logger.error(f"OCR识别错误: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return "", {'confidence': 0.0, 'boxes': [], 'error': str(e)}
     
     def autocorrect_text(self, text: str) -> str:

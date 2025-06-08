@@ -285,6 +285,9 @@ class OCRController(QObject):
     def select_area(self):
         """选择屏幕区域"""
         try:
+            # 首先停止自动刷新，确保选择过程中不会刷新预览
+            self.stop_auto_refresh()
+            
             # 告知用户如何操作
             QMessageBox.information(
                 self.ocr_tab,
@@ -298,6 +301,9 @@ class OCRController(QObject):
             if not rect or not pixmap:
                 logger.warning("区域选择被取消或失败")
                 return
+            
+            # 记录所选区域信息
+            logger.info(f"用户选择的区域: X={rect.x()}, Y={rect.y()}, 宽={rect.width()}, 高={rect.height()}")
             
             # 设置截图预览
             self.ocr_tab.preview.set_image(pixmap)
@@ -313,17 +319,52 @@ class OCRController(QObject):
             # 使用MacScreenCaptureSelector返回的完整区域信息
             self.current_rect = rect
             
+            # 确保捕获区域能够正确工作
+            logger.info("测试捕获所选区域是否有效")
+            original_config = self.screen_capture.get_config()
+            test_config = original_config.copy()
+            test_config['use_cache'] = False
+            test_config['throttle'] = False
+            test_config['compensate_dpi'] = False  # 禁用DPI补偿，保持原始坐标
+            self.screen_capture.set_config(test_config)
+            
+            # 尝试捕获区域
+            test_image = self.screen_capture.capture_area(self.current_rect)
+            
+            # 恢复原始配置
+            self.screen_capture.set_config(original_config)
+            
+            if test_image is None or test_image.size == 0:
+                logger.warning("区域捕获测试失败，返回的图像无效")
+                QMessageBox.warning(
+                    self.ocr_tab,
+                    "警告",
+                    "所选区域可能无法正确捕获，请重试或选择其他区域。"
+                )
+                return  # 如果捕获测试失败，不保存区域
+            else:
+                logger.info(f"区域捕获测试成功，图像大小: {test_image.shape}")
+            
             # 更新UI
             self.update_area_spinners()
             
             # 保存区域到配置
             self.save_area_to_config()
             
-            # 确保自动刷新已启动
-            if not self.auto_refresh_timer.isActive():
-                self.start_auto_refresh()
+            # 不要自动启动刷新，避免丢失选择的区域
+            # if not self.auto_refresh_timer.isActive():
+            #     self.start_auto_refresh()
             
-            logger.info(f"区域已选择: {self.current_rect}")
+            logger.info(f"区域已选择并保存: {self.current_rect}")
+            
+            # 提示用户区域已成功选择并保存
+            QMessageBox.information(
+                self.ocr_tab,
+                "区域选择成功",
+                f"已成功选择并保存区域: X={rect.x()}, Y={rect.y()}, 宽={rect.width()}, 高={rect.height()}\n\n"
+                f"该区域将用于OCR识别和监控。\n"
+                f"注意: 预览不会自动刷新，以保持所选区域不变。"
+            )
             
         except Exception as e:
             logger.error(f"区域选择失败: {e}")
@@ -344,53 +385,47 @@ class OCRController(QObject):
                 logger.debug("没有选择区域，无法更新预览")
                 return
             
-            # 捕获屏幕区域
-            image = self.screen_capture.capture_area(self.current_rect)
+            # 在监控模式下，使用特殊直接截图OCR方法
+            if self.is_monitoring:
+                logger.debug("监控模式：使用直接截图OCR方法更新")
+                self.direct_screenshot_ocr(self.current_rect)
+                return
             
-            # 转换为QPixmap
-            if image is not None:
-                try:
-                    # 创建临时文件保存预览图像
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
-                        temp_filename = temp_file.name
-                    
-                    # 保存图像
-                    import cv2
-                    cv2.imwrite(temp_filename, image)
-                    
-                    # 保存当前截图路径
-                    self.current_screenshot = temp_filename
-                    
-                    # 加载QPixmap
-                    pixmap = QPixmap(temp_filename)
-                    
-                    # 设置预览图像
-                    self.ocr_tab.preview.set_image(pixmap)
-                    
-                    logger.debug(f"已更新预览，图像大小: {pixmap.width()}x{pixmap.height()}")
-                    
-                    # 获取当前选择的区域信息
-                    x, y, width, height = (
-                        self.current_rect.x(),
-                        self.current_rect.y(),
-                        self.current_rect.width(),
-                        self.current_rect.height()
-                    )
-                    
-                    # 更新状态栏
-                    main_window = self.ocr_tab.window()
-                    if main_window and hasattr(main_window, 'status_bar'):
-                        main_window.status_bar.update_screen_area(
-                            f"{x},{y} {width}x{height}"
-                        )
-                except Exception as inner_e:
-                    logger.error(f"处理预览图像失败: {inner_e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    # 即使处理失败也不中断监控流程
+            # 非监控模式下，尽量不刷新预览，保持选择的区域不变
+            if self.current_screenshot and os.path.exists(self.current_screenshot):
+                # 仅使用已有的截图，不尝试重新捕获
+                pixmap = QPixmap(self.current_screenshot)
+                # 设置预览图像
+                self.ocr_tab.preview.set_image(pixmap)
+                logger.debug(f"更新预览: 使用已保存的截图更新预览，图像大小: {pixmap.width()}x{pixmap.height()}")
             else:
-                logger.warning("截图获取失败，可能是区域无效或截图权限问题")
+                # 如果没有保存的截图，禁用自动刷新
+                logger.debug("更新预览: 没有保存的截图，停止自动刷新预览")
+                self.stop_auto_refresh()
+                return
+            
+            # 获取当前选择的区域信息并更新状态栏（避免使用不存在的方法）
+            if self.current_rect:
+                x, y, width, height = (
+                    self.current_rect.x(),
+                    self.current_rect.y(),
+                    self.current_rect.width(),
+                    self.current_rect.height()
+                )
                 
+                # 更新状态栏（安全地检查方法是否存在）
+                main_window = self.ocr_tab.window()
+                if main_window and hasattr(main_window, 'status_bar'):
+                    # 检查status_bar是否有update_screen_area方法
+                    if hasattr(main_window.status_bar, 'update_screen_area'):
+                        main_window.status_bar.update_screen_area(f"{x},{y} {width}x{height}")
+                    else:
+                        # 使用通用的状态栏更新方法
+                        status_text = f"区域: {x},{y} {width}x{height}"
+                        if hasattr(main_window.status_bar, 'showMessage'):
+                            main_window.status_bar.showMessage(status_text, 5000)
+                        logger.debug(f"更新预览: 使用通用方法更新状态栏: {status_text}")
+        
         except Exception as e:
             logger.error(f"更新预览失败: {e}")
             import traceback
@@ -401,130 +436,408 @@ class OCRController(QObject):
     def test_ocr(self):
         """测试OCR识别"""
         try:
-            # 检查是否选择了区域
+            # 检查是否有选择的区域
             if not self.current_rect:
-                QMessageBox.warning(
-                    self.ocr_tab, 
-                    "警告", 
-                    "请先选择一个区域"
-                )
+                self.show_message("请先选择一个屏幕区域")
                 return
             
-            # 这里不再调用update_preview()方法，而是使用选择区域时保存的截图
-            if not self.current_screenshot or not os.path.exists(self.current_screenshot):
-                # 如果没有当前截图，才更新预览
-                logger.info("没有可用的截图，将捕获新的屏幕区域")
-                self.update_preview()
+            logger.info("开始OCR测试...")
+            
+            # 使用直接截图OCR方法对当前区域进行识别
+            self.direct_screenshot_ocr(self.current_rect)
+            
+            # 检查OCR结果
+            if self.last_ocr_text:
+                self.show_message(f"OCR测试成功，识别到 {len(self.last_ocr_text)} 个字符", color="green")
+                logger.info(f"OCR测试成功，文本长度: {len(self.last_ocr_text)}")
             else:
-                logger.info(f"使用已有的截图进行OCR测试: {self.current_screenshot}")
+                self.show_message("OCR测试完成，但未识别到文本", color="orange")
+                logger.warning("OCR测试未识别到文本")
             
-            # 检查是否有有效的截图
-            if not self.current_screenshot or not os.path.exists(self.current_screenshot):
-                logger.error("没有有效的截图用于OCR识别")
-                QMessageBox.warning(
-                    self.ocr_tab,
-                    "错误",
-                    "获取屏幕区域失败，请重新选择区域"
-                )
+        except Exception as e:
+            logger.error(f"OCR测试失败: {e}")
+            self.show_message(f"OCR测试失败: {str(e)}", color="red")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    def stop_auto_refresh(self):
+        """停止自动刷新预览"""
+        if self.auto_refresh_timer.isActive():
+            self.auto_refresh_timer.stop()
+            logger.debug("已停止OCR预览自动刷新")
+        
+    def start_monitoring(self):
+        """开始监控，启动刷新定时器"""
+        if not self.current_rect:
+            logger.warning("没有选择区域，无法开始监控")
+            return False
+        
+        # 获取监控设置中的刷新间隔
+        refresh_interval = 1000  # 默认1秒
+        
+        # 尝试从监控标签页获取刷新间隔
+        try:
+            main_window = self.ocr_tab.window()
+            if main_window and hasattr(main_window, 'monitor_controller'):
+                monitor_controller = main_window.monitor_controller
+                # 获取监控标签页中的间隔设置
+                monitor_tab = monitor_controller.monitor_tab
+                if hasattr(monitor_tab, 'interval_combo'):
+                    interval_text = monitor_tab.interval_combo.currentText()
+                    try:
+                        interval_seconds = int(interval_text)
+                        refresh_interval = interval_seconds * 1000
+                        logger.debug(f"使用监控设置的刷新间隔: {interval_seconds}秒")
+                    except ValueError:
+                        logger.warning(f"无法解析监控间隔值: {interval_text}，使用默认值")
+        except Exception as e:
+            logger.warning(f"获取监控间隔设置失败: {e}，使用默认值")
+        
+        # 停止自动刷新定时器
+        if self.auto_refresh_timer.isActive():
+            self.auto_refresh_timer.stop()
+        
+        # 设置监控状态
+        self.is_monitoring = True
+        
+        # 立即进行一次特殊的直接截图OCR识别
+        self.direct_screenshot_ocr(self.current_rect)
+        
+        # 启动监控定时器，使用特殊OCR方法
+        if self.refresh_timer.isActive():
+            self.refresh_timer.stop()
+        self.refresh_timer.timeout.connect(lambda: self.direct_screenshot_ocr(self.current_rect))
+        self.refresh_timer.start(refresh_interval)
+        
+        logger.info(f"OCR监控已启动，使用直接截图模式，刷新频率: {refresh_interval}毫秒")
+        return True
+
+    def show_message(self, message, color=None):
+        """显示消息在状态栏或通过QMessageBox
+        
+        Args:
+            message: 要显示的消息
+            color: 消息颜色，可选 "red", "green", "orange"
+        """
+        logger.info(f"显示消息: {message}")
+        
+        # 尝试在状态栏上显示
+        main_window = self.ocr_tab.window()
+        if main_window and hasattr(main_window, 'status_bar'):
+            if hasattr(main_window.status_bar, 'showMessage'):
+                main_window.status_bar.showMessage(message, 5000)  # 显示5秒
                 return
+        
+        # 如果没有状态栏，使用QMessageBox
+        if color == "red":
+            QMessageBox.warning(self.ocr_tab, "警告", message)
+        elif color == "green":
+            QMessageBox.information(self.ocr_tab, "成功", message)
+        else:
+            QMessageBox.information(self.ocr_tab, "信息", message)
+
+    def direct_screenshot_ocr(self, rect):
+        """特殊直接截图OCR方法，完全绕过现有处理流程
+        
+        Args:
+            rect: 屏幕区域
+        """
+        try:
+            # 获取精确的区域坐标 - 直接使用传入坐标
+            x, y, width, height = rect.x(), rect.y(), rect.width(), rect.height()
+            logger.info(f"直接截图OCR: 使用原始坐标 x={x}, y={y}, width={width}, height={height}")
             
-            # 直接使用截图文件进行OCR识别，而不是使用区域坐标
+            import tempfile
+            import subprocess
+            import cv2
+            import os
+            
+            # 创建临时文件
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
+                temp_filename = temp_file.name
+            
+            # 使用screencapture命令进行截图，强制使用原始坐标
             try:
-                # 读取保存的图像文件
-                import cv2
-                image = cv2.imread(self.current_screenshot)
+                logger.debug(f"直接截图OCR: 开始使用系统命令截图，输出到 {temp_filename}")
                 
-                # 使用OCR处理器直接识别图像
-                text, details = self.ocr_processor.recognize_text(image)
+                result = subprocess.run([
+                    'screencapture',
+                    '-x',  # 无声
+                    '-R', f"{x},{y},{width},{height}",  # 区域格式：x,y,width,height
+                    temp_filename
+                ], check=True, capture_output=True)
+                
+                if not os.path.exists(temp_filename) or os.path.getsize(temp_filename) == 0:
+                    raise Exception("系统截图命令未能创建有效的图像文件")
+                    
+                # 读取图像
+                image = cv2.imread(temp_filename)
+                
+                # 转换为RGB格式
+                if image is not None:
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    logger.info(f"直接截图OCR: 成功获取图像，尺寸: {image.shape}")
+                else:
+                    raise Exception("无法读取截图文件")
+                    
+                # 检查图像尺寸是否与请求区域一致
+                high_res_image = None
+                resized_for_preview = False
+                ocr_image = image.copy()  # 默认使用原始图像进行OCR
+                
+                # 处理Retina显示器或高DPI情况
+                if image.shape[1] != width or image.shape[0] != height:
+                    scale_factor = 0
+                    if image.shape[1] == width * 2 and image.shape[0] == height * 2:
+                        scale_factor = 2
+                        logger.info(f"检测到Retina显示器(2x DPI)，自动调整图像尺寸")
+                    elif image.shape[1] == width * 1.5 and image.shape[0] == height * 1.5:
+                        scale_factor = 1.5
+                        logger.info(f"检测到1.5x DPI显示器，自动调整图像尺寸")
+                    
+                    if scale_factor > 0:
+                        # 保留原始高分辨率图像用于OCR识别，可以提高准确率
+                        high_res_image = image.copy()
+                        ocr_image = high_res_image  # 使用高分辨率图像进行OCR
+                        
+                        # 为UI预览创建缩放后的图像
+                        resized_image = cv2.resize(image, (width, height))
+                        logger.info(f"图像已调整为匹配请求尺寸: {resized_image.shape}")
+                        
+                        # 将调整后的图像保存到新的临时文件
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as resized_file:
+                            resized_filename = resized_file.name
+                        
+                        cv2.imwrite(resized_filename, cv2.cvtColor(resized_image, cv2.COLOR_RGB2BGR))
+                        logger.debug(f"已保存调整大小的图像到: {resized_filename}")
+                        
+                        # 标记已为预览调整大小
+                        resized_for_preview = True
+                        
+                        # 更新图像变量，供后续使用
+                        image = resized_image
+                        
+                        # 更新当前截图路径，但保留原始文件供OCR使用
+                        if not high_res_image is None:
+                            # 保留原始高分辨率图像文件
+                            pass
+                        else:
+                            # 删除原始文件
+                            if os.path.exists(temp_filename):
+                                try:
+                                    os.remove(temp_filename)
+                                except:
+                                    pass
+                        
+                        # 使用调整后的图像作为当前截图
+                        temp_filename = resized_filename
+                    else:
+                        logger.warning(f"直接截图OCR: 图像尺寸({image.shape[1]}x{image.shape[0]})与请求区域尺寸({width}x{height})不匹配，但无法确定缩放比例")
+                
+                # 更新当前截图路径
+                if self.current_screenshot and os.path.exists(self.current_screenshot) and self.current_screenshot != temp_filename:
+                    try:
+                        os.remove(self.current_screenshot)
+                    except:
+                        pass
+                self.current_screenshot = temp_filename
+                
+                # 创建预览图像 - 确保UI中显示的图像与选择区域尺寸一致
+                pixmap = QPixmap(temp_filename)
+                
+                # 如果尺寸仍不匹配，强制调整为用户选择的区域尺寸
+                if pixmap.width() != width or pixmap.height() != height:
+                    logger.warning(f"预览图像尺寸({pixmap.width()}x{pixmap.height()})与选定区域尺寸({width}x{height})不匹配，强制调整")
+                    pixmap = pixmap.scaled(width, height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                
+                # 更新预览图像
+                self.ocr_tab.preview.set_image(pixmap)
+                logger.info(f"设置预览图像: {pixmap.width()}x{pixmap.height()}")
+                
+                # 使用OCR处理器识别图像
+                # 始终使用最高分辨率的图像进行OCR处理
+                text, details = self.ocr_processor.recognize_text(ocr_image)
                 
                 # 保存识别结果
                 self.last_ocr_text = text
                 self.last_ocr_details = details
                 
                 # 更新结果显示
-                result_text = self.ocr_tab.right_panel.findChild(
-                    QObject, "result_text"
-                )
+                result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
                 if result_text:
                     result_text.setPlainText(text)
                 
-                # 更新详细信息
-                confidence_label = self.ocr_tab.right_panel.findChild(
-                    QObject, "confidence_label"
-                )
-                if confidence_label:
-                    confidence = details.get('confidence', 0)
-                    confidence_label.setText(f"置信度: {confidence}%")
+                # 添加精确的区域信息到结果中
+                details['rect'] = {
+                    'x': x,
+                    'y': y,
+                    'width': width,
+                    'height': height,
+                    'original_rect': rect
+                }
                 
-                word_count_label = self.ocr_tab.right_panel.findChild(
-                    QObject, "word_count_label"
-                )
-                if word_count_label:
-                    word_count = details.get('word_count', 0)
-                    word_count_label.setText(f"词数: {word_count}")
+                # 传递区域信息和当前截图路径
+                details['screenshot'] = self.current_screenshot
                 
-                char_count_label = self.ocr_tab.right_panel.findChild(
-                    QObject, "char_count_label"
-                )
-                if char_count_label:
-                    char_count = details.get('char_count', 0)
-                    char_count_label.setText(f"字符数: {char_count}")
-                    
-                # 显示文本框位置
-                preview_label = self.ocr_tab.right_panel.findChild(
-                    QObject, "preview_label"
-                )
-                if preview_label and self.current_screenshot:
-                    # 加载预览图像
-                    pixmap = QPixmap(self.current_screenshot)
-                    
-                    # 创建带有文本框的图像
-                    if 'boxes' in details and pixmap and not pixmap.isNull():
-                        # 转换为OpenCV图像
-                        image_with_boxes = image.copy()
-                        
-                        # 在图像上绘制文本框
-                        boxes = details.get('boxes', [])
-                        for box in boxes:
-                            x, y, w, h = box['x'], box['y'], box['width'], box['height']
-                            
-                            # 绘制矩形
-                            cv2.rectangle(image_with_boxes, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                            
-                        # 转换回QPixmap
-                        highlighted_pixmap = self.cv2_to_pixmap(image_with_boxes)
-                        
-                        # 显示图像
-                        preview_label.setPixmap(highlighted_pixmap)
-                        preview_label.setScaledContents(True)
+                # 触发文本识别信号
+                logger.info(f"直接截图OCR: 识别成功，文本长度: {len(text)}字符，区域: {rect}")
+                self.text_recognized.emit(text, details)
                 
-                logger.info(f"OCR测试成功，识别文本: {len(text)} 字符")
-                
-            except Exception as ocr_error:
-                logger.error(f"OCR识别失败: {ocr_error}")
+            except Exception as e:
+                logger.error(f"直接截图OCR失败: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
-                # 回退到使用区域识别
-                text, details = self.text_recognizer.recognize_area(self.current_rect)
-                if text:
-                    logger.info("使用区域识别方法成功")
-                    # 更新结果显示
-                    result_text = self.ocr_tab.right_panel.findChild(
-                        QObject, "result_text"
-                    )
-                    if result_text:
-                        result_text.setPlainText(text)
-            
+                
         except Exception as e:
-            logger.error(f"OCR测试失败: {e}")
+            logger.error(f"直接截图OCR方法异常: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            QMessageBox.warning(
-                self.ocr_tab, 
-                "错误", 
-                f"OCR测试失败: {e}"
-            )
+
+    def stop_monitoring(self):
+        """停止监控，停止刷新定时器"""
+        if self.refresh_timer.isActive():
+            # 断开特殊OCR方法连接
+            try:
+                self.refresh_timer.timeout.disconnect()
+            except Exception:
+                pass
+            self.refresh_timer.stop()
+        self.is_monitoring = False
+        
+        # 重新启动自动刷新定时器
+        self.start_auto_refresh()
+        
+        logger.info("OCR监控已停止")
+        return True
+
+    def pixmap_to_cv2(self, pixmap):
+        """将QPixmap转换为OpenCV图像"""
+        try:
+            import numpy as np
+            import cv2
+            
+            # 将QPixmap转换为QImage
+            qimage = pixmap.toImage()
+            
+            # 确保图像格式正确
+            if qimage.format() != QImage.Format_RGB32:
+                qimage = qimage.convertToFormat(QImage.Format_RGB32)
+            
+            # 获取图像数据
+            width = qimage.width()
+            height = qimage.height()
+            
+            # 获取图像数据
+            bits = qimage.bits()
+            bits.setsize(height * width * 4)  # 4 bytes per pixel (RGBA)
+            
+            # 转换为numpy数组
+            arr = np.frombuffer(bits, np.uint8).reshape((height, width, 4))
+            
+            # 仅使用RGB通道
+            img_cv = arr[:, :, :3]
+            
+            return img_cv
+        except Exception as e:
+            logger.error(f"将QPixmap转换为OpenCV图像失败: {e}")
+            return None
     
+    def cv2_to_pixmap(self, img_cv):
+        """将OpenCV图像转换为QPixmap"""
+        try:
+            import numpy as np
+            import cv2
+            
+            # 确保图像是RGB格式
+            if len(img_cv.shape) == 2:  # 灰度图像
+                img_cv = cv2.cvtColor(img_cv, cv2.COLOR_GRAY2RGB)
+            elif img_cv.shape[2] == 4:  # RGBA图像
+                img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGBA2RGB)
+            
+            # 转换为QImage
+            height, width, channel = img_cv.shape
+            bytes_per_line = 3 * width
+            qimg = QImage(img_cv.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            
+            # 转换为QPixmap
+            pixmap = QPixmap.fromImage(qimg)
+            
+            return pixmap
+        except Exception as e:
+            logger.error(f"将OpenCV图像转换为QPixmap失败: {e}")
+            return QPixmap()
+
+    @pyqtSlot(str, dict)
+    def on_text_recognized(self, text, details):
+        """文本识别信号处理"""
+        try:
+            # 保存识别结果
+            self.last_ocr_text = text
+            self.last_ocr_details = details
+            
+            # 更新结果显示
+            result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
+            if result_text:
+                result_text.setPlainText(text)
+            
+            # 日志记录当前区域
+            if self.current_rect:
+                logger.info(f"OCR识别区域: X={self.current_rect.x()}, Y={self.current_rect.y()}, "
+                           f"宽={self.current_rect.width()}, 高={self.current_rect.height()}")
+            
+            # 检查截图是否存在及其尺寸
+            if self.current_screenshot and os.path.exists(self.current_screenshot):
+                try:
+                    import cv2
+                    image = cv2.imread(self.current_screenshot)
+                    if image is not None:
+                        logger.info(f"当前截图尺寸: {image.shape}")
+                except Exception as e:
+                    logger.error(f"检查截图尺寸失败: {e}")
+            
+            # 更新主窗口的监控引擎
+            main_window = self.ocr_tab.window()
+            if main_window and hasattr(main_window, 'monitor_engine'):
+                # 传递区域信息和当前截图路径
+                extra_info = {
+                    'rect': self.current_rect,
+                    'screenshot': self.current_screenshot
+                }
+                # 将额外信息添加到details中
+                if isinstance(details, dict):
+                    details.update(extra_info)
+                
+                main_window.monitor_engine.process_text(text, details)
+                
+            logger.debug(f"收到文本识别结果: {len(text)} 字符")
+            
+        except Exception as e:
+            logger.error(f"处理文本识别结果失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    @pyqtSlot(str)
+    def on_error(self, error):
+        """错误回调"""
+        logger.error(f"OCR错误: {error}")
+        QMessageBox.warning(
+            self.ocr_tab, 
+            "OCR错误", 
+            f"OCR处理过程中发生错误: {error}"
+        )
+
+    def set_monitor_engine(self, monitor_engine):
+        """设置监控引擎"""
+        self.monitor_engine = monitor_engine
+    
+    def set_log_model(self, log_model):
+        """设置日志模型
+        
+        Args:
+            log_model: 日志模型
+        """
+        self.log_model = log_model
+
     def update_area_spinners(self):
         """更新区域坐标输入框"""
         if not self.current_rect:
@@ -555,7 +868,7 @@ class OCRController(QObject):
         
         # 保存区域到配置
         self.save_area_to_config()
-    
+
     @pyqtSlot()
     def update_area_from_spinners(self):
         """从坐标输入框更新区域"""
@@ -582,7 +895,7 @@ class OCRController(QObject):
                 # 保存区域到配置
                 self.save_area_to_config()
                 logger.info(f"已保存更新后的区域到配置: {self.current_rect}")
-    
+
     @pyqtSlot(str)
     def update_language(self, language):
         """更新OCR语言"""
@@ -595,7 +908,7 @@ class OCRController(QObject):
         # 更新OCR配置
         self.ocr_processor.set_config({'language': lang_code})
         logger.info(f"OCR语言已更新: {language} ({lang_code})")
-    
+
     @pyqtSlot(int)
     def update_accuracy(self, value):
         """更新OCR精度"""
@@ -610,28 +923,28 @@ class OCRController(QObject):
             accuracy_value.setText(f"{value}%")
         
         logger.info(f"OCR精度已更新: {value}%")
-    
+
     @pyqtSlot(int)
     def update_preprocess(self, state):
         """更新图像预处理设置"""
         # 更新OCR配置
         self.ocr_processor.set_config({'preprocess': bool(state)})
         logger.info(f"OCR预处理已{'启用' if state else '禁用'}")
-    
+
     @pyqtSlot(int)
     def update_autocorrect(self, state):
         """更新文本自动修正设置"""
         # 更新OCR配置
         self.ocr_processor.set_config({'autocorrect': bool(state)})
         logger.info(f"OCR文本自动修正已{'启用' if state else '禁用'}")
-    
+
     @pyqtSlot(int)
     def update_psm(self, index):
         """更新PSM模式"""
         # 更新OCR配置
         self.ocr_processor.set_config({'psm': index})
         logger.info(f"OCR PSM模式已更新: {index}")
-    
+
     @pyqtSlot(int)
     def update_oem(self, index):
         """更新OEM引擎模式"""
@@ -842,31 +1155,14 @@ class OCRController(QObject):
         """启动自动刷新预览"""
         if not self.current_rect:
             return
-            
-        # 获取监控设置中的间隔时间
-        refresh_interval = 1500  # 默认值：1.5秒
         
-        # 尝试从监控标签页获取刷新间隔
-        try:
-            main_window = self.ocr_tab.window()
-            if main_window and hasattr(main_window, 'monitor_controller'):
-                monitor_controller = main_window.monitor_controller
-                # 获取监控标签页中的间隔设置
-                monitor_tab = monitor_controller.monitor_tab
-                if hasattr(monitor_tab, 'interval_combo'):
-                    interval_text = monitor_tab.interval_combo.currentText()
-                    try:
-                        # 监控间隔以秒为单位，转换为毫秒
-                        interval_seconds = int(interval_text)
-                        refresh_interval = interval_seconds * 1000
-                        logger.debug(f"使用监控设置的刷新间隔: {interval_seconds}秒")
-                    except ValueError:
-                        logger.warning(f"无法解析监控间隔值: {interval_text}，使用默认值")
-        except Exception as e:
-            logger.warning(f"获取监控间隔设置失败: {e}，使用默认值")
+        # 只有在有选定区域和有截图的情况下才启动自动刷新
+        if not self.current_screenshot or not os.path.exists(self.current_screenshot):
+            logger.debug("没有有效的截图，不启动自动刷新")
+            return
         
-        # 设置自动刷新间隔，最小500毫秒，最大5秒
-        refresh_interval = max(500, min(refresh_interval, 5000))
+        # 设置较长的刷新间隔，减少刷新频率
+        refresh_interval = 5000  # 5秒刷新一次，避免频繁刷新导致位置丢失
         
         # 启动定时器
         if self.auto_refresh_timer.isActive():
@@ -874,167 +1170,86 @@ class OCRController(QObject):
         self.auto_refresh_timer.start(refresh_interval)
         logger.debug(f"已启动OCR预览自动刷新，间隔: {refresh_interval}毫秒")
 
-    def stop_auto_refresh(self):
-        """停止自动刷新预览"""
-        if self.auto_refresh_timer.isActive():
-            self.auto_refresh_timer.stop()
-            logger.debug("已停止OCR预览自动刷新")
-            
-    def start_monitoring(self):
-        """开始监控，启动刷新定时器"""
-        if not self.current_rect:
-            logger.warning("没有选择区域，无法开始监控")
-            return False
-        
-        # 获取监控设置中的刷新间隔
-        refresh_interval = 1000  # 默认1秒
-        
-        # 尝试从监控标签页获取刷新间隔
+    def perform_ocr(self):
+        """执行OCR操作"""
         try:
-            main_window = self.ocr_tab.window()
-            if main_window and hasattr(main_window, 'monitor_controller'):
-                monitor_controller = main_window.monitor_controller
-                # 获取监控标签页中的间隔设置
-                monitor_tab = monitor_controller.monitor_tab
-                if hasattr(monitor_tab, 'interval_combo'):
-                    interval_text = monitor_tab.interval_combo.currentText()
-                    try:
-                        interval_seconds = int(interval_text)
-                        refresh_interval = interval_seconds * 1000
-                        logger.debug(f"使用监控设置的刷新间隔: {interval_seconds}秒")
-                    except ValueError:
-                        logger.warning(f"无法解析监控间隔值: {interval_text}，使用默认值")
-        except Exception as e:
-            logger.warning(f"获取监控间隔设置失败: {e}，使用默认值")
-        
-        # 停止自动刷新定时器
-        if self.auto_refresh_timer.isActive():
-            self.auto_refresh_timer.stop()
-        
-        # 启动监控定时器
-        if self.refresh_timer.isActive():
-            self.refresh_timer.stop()
-        self.refresh_timer.start(refresh_interval)
-        self.is_monitoring = True
-        
-        # 立即更新一次预览
-        self.update_preview()
-        
-        logger.info(f"OCR监控已启动，刷新频率: {refresh_interval}毫秒")
-        return True
-    
-    def stop_monitoring(self):
-        """停止监控，停止刷新定时器"""
-        if self.refresh_timer.isActive():
-            self.refresh_timer.stop()
-        self.is_monitoring = False
-        
-        # 重新启动自动刷新定时器
-        self.start_auto_refresh()
-        
-        logger.info("OCR监控已停止")
-        return True
-
-    def pixmap_to_cv2(self, pixmap):
-        """将QPixmap转换为OpenCV图像"""
-        try:
-            import numpy as np
-            import cv2
+            # 检查是否有选择的区域
+            if not self.current_rect:
+                self.show_message("请先选择一个屏幕区域")
+                return
             
-            # 将QPixmap转换为QImage
-            qimage = pixmap.toImage()
+            # 检查是否有截图
+            if not self.current_screenshot or not os.path.exists(self.current_screenshot):
+                self.show_message("没有可用的截图")
+                return
             
-            # 确保图像格式正确
-            if qimage.format() != QImage.Format_RGB32:
-                qimage = qimage.convertToFormat(QImage.Format_RGB32)
+            # 使用直接截图OCR方法获取最新图像并识别
+            self.direct_screenshot_ocr(self.current_rect)
             
-            # 获取图像数据
-            width = qimage.width()
-            height = qimage.height()
-            
-            # 获取图像数据
-            bits = qimage.bits()
-            bits.setsize(height * width * 4)  # 4 bytes per pixel (RGBA)
-            
-            # 转换为numpy数组
-            arr = np.frombuffer(bits, np.uint8).reshape((height, width, 4))
-            
-            # 仅使用RGB通道
-            img_cv = arr[:, :, :3]
-            
-            return img_cv
-        except Exception as e:
-            logger.error(f"将QPixmap转换为OpenCV图像失败: {e}")
-            return None
-    
-    def cv2_to_pixmap(self, img_cv):
-        """将OpenCV图像转换为QPixmap"""
-        try:
-            import numpy as np
-            import cv2
-            
-            # 确保图像是RGB格式
-            if len(img_cv.shape) == 2:  # 灰度图像
-                img_cv = cv2.cvtColor(img_cv, cv2.COLOR_GRAY2RGB)
-            elif img_cv.shape[2] == 4:  # RGBA图像
-                img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGBA2RGB)
-            
-            # 转换为QImage
-            height, width, channel = img_cv.shape
-            bytes_per_line = 3 * width
-            qimg = QImage(img_cv.data, width, height, bytes_per_line, QImage.Format_RGB888)
-            
-            # 转换为QPixmap
-            pixmap = QPixmap.fromImage(qimg)
-            
-            return pixmap
-        except Exception as e:
-            logger.error(f"将OpenCV图像转换为QPixmap失败: {e}")
-            return QPixmap()
-
-    @pyqtSlot(str, dict)
-    def on_text_recognized(self, text, details):
-        """文本识别信号处理"""
-        try:
-            # 保存识别结果
-            self.last_ocr_text = text
-            self.last_ocr_details = details
-            
-            # 更新结果显示
-            result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
-            if result_text:
-                result_text.setPlainText(text)
-            
-            # 更新主窗口的监控引擎
-            main_window = self.ocr_tab.window()
-            if main_window and hasattr(main_window, 'monitor_engine'):
-                main_window.monitor_engine.process_text(text, details)
-                
-            logger.debug(f"收到文本识别结果: {len(text)} 字符")
+            # 显示结果在界面上
+            if self.last_ocr_text:
+                self.ocr_tab.right_panel.findChild(QObject, "result_text").setPlainText(self.last_ocr_text)
+                self.show_message(f"OCR识别完成，共 {len(self.last_ocr_text)} 个字符", color="green")
+            else:
+                self.show_message("OCR识别完成，但没有识别到文本", color="orange")
             
         except Exception as e:
-            logger.error(f"处理文本识别结果失败: {e}")
+            logger.error(f"执行OCR操作失败: {e}")
+            self.show_message(f"OCR识别失败: {str(e)}", color="red")
             import traceback
             logger.error(traceback.format_exc())
-    
-    @pyqtSlot(str)
-    def on_error(self, error):
-        """错误回调"""
-        logger.error(f"OCR错误: {error}")
-        QMessageBox.warning(
-            self.ocr_tab, 
-            "OCR错误", 
-            f"OCR处理过程中发生错误: {error}"
-        )
 
-    def set_monitor_engine(self, monitor_engine):
-        """设置监控引擎"""
-        self.monitor_engine = monitor_engine
-    
-    def set_log_model(self, log_model):
-        """设置日志模型
-        
-        Args:
-            log_model: 日志模型
-        """
-        self.log_model = log_model
+    @pyqtSlot()
+    def refresh_ocr(self):
+        """刷新OCR识别结果"""
+        try:
+            if not self.current_rect:
+                logger.debug("刷新OCR：没有选择区域，无法刷新OCR")
+                return
+            
+            # 使用直接截图OCR方法获取最新图像并识别
+            logger.debug("刷新OCR：使用直接截图OCR方法获取最新结果")
+            self.direct_screenshot_ocr(self.current_rect)
+            
+            # 检查OCR结果是否为空
+            if not self.last_ocr_text:
+                logger.warning("刷新OCR：识别结果为空")
+                self.show_message("OCR识别结果为空", color="orange")
+            else:
+                logger.debug(f"刷新OCR：成功识别 {len(self.last_ocr_text)} 个字符")
+            
+        except Exception as e:
+            logger.error(f"刷新OCR识别失败: {e}")
+            self.show_message(f"刷新OCR识别失败: {str(e)}", color="red")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    def shutdown(self):
+        """关闭OCR控制器，释放资源"""
+        try:
+            logger.info("关闭OCR控制器...")
+            
+            # 停止监控
+            if self.is_monitoring:
+                self.stop_monitoring()
+            
+            # 停止定时器
+            if self.auto_refresh_timer.isActive():
+                self.auto_refresh_timer.stop()
+            
+            if self.refresh_timer.isActive():
+                self.refresh_timer.stop()
+            
+            # 删除临时文件
+            if self.current_screenshot and os.path.exists(self.current_screenshot):
+                try:
+                    os.remove(self.current_screenshot)
+                    logger.debug(f"已删除临时截图文件: {self.current_screenshot}")
+                except Exception as e:
+                    logger.warning(f"删除临时截图文件失败: {e}")
+            
+            logger.info("OCR控制器已关闭")
+        except Exception as e:
+            logger.error(f"关闭OCR控制器时发生错误: {e}")
+            import traceback
+            logger.error(traceback.format_exc())

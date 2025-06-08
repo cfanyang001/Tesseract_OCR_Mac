@@ -17,10 +17,20 @@
     "autocorrect": false,
     "screen_area": {
       "x": 821,
-      "y": 593,
-      "width": 274,
-      "height": 102,
+      "y": 596,
+      "width": 312,
+      "height": 82,
       "is_selected": true
     }
+  },
+  "monitor": {
+    "interval": "2",
+    "match_mode": "包含匹配",
+    "rule_combination": "AND",
+    "custom_expression": "",
+    "trigger_condition": "规则满足时",
+    "trigger_delay": 0,
+    "action_type": "发送通知",
+    "action_param": ""
   }
 }

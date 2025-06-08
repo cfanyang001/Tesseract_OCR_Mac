@@ -1255,3 +1255,27 @@ class MonitorController(QObject):
         if hasattr(self, 'last_refresh_time'):
             return self.last_refresh_time
         return 0.0
+
+    def shutdown(self):
+        """关闭监控控制器，释放资源"""
+        try:
+            logger.info("关闭监控控制器...")
+            
+            # 停止监控
+            if self.is_monitoring:
+                self.toggle_monitoring()
+            
+            # 获取主窗口
+            main_window = self.monitor_tab.window()
+            if main_window and hasattr(main_window, 'monitor_engine'):
+                # 保存监控配置
+                main_window.monitor_engine.save_config()
+                
+            # 保存监控标签页配置
+            self.save_monitor_tab_config()
+            
+            logger.info("监控控制器已关闭")
+        except Exception as e:
+            logger.error(f"关闭监控控制器时发生错误: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
