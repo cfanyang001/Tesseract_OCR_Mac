@@ -17,6 +17,7 @@ from ui.components.area_selector_mac import MacScreenCaptureSelector
 from loguru import logger
 import cv2
 import pyautogui
+import traceback
 
 
 class OCRController(QObject):
@@ -408,100 +409,56 @@ class OCRController(QObject):
     @pyqtSlot()
     def test_ocr(self):
         """测试OCR识别"""
+        # 先导入必要的模块，避免前面报错
+        import os
+        import subprocess
+        import tempfile
+        import datetime
+        import shutil
+        import cv2
+        import traceback
+        from PyQt5.QtWidgets import QMessageBox
+        
         try:
-            # 优先使用原始截图进行OCR识别
-            from ui.components.area_selector_mac import MacScreenCaptureSelector
-            
-            if MacScreenCaptureSelector.original_capture_path and os.path.exists(MacScreenCaptureSelector.original_capture_path):
-                logger.info(f"使用原始截图进行OCR测试: {MacScreenCaptureSelector.original_capture_path}")
-                
-                # 检查是否有选择的区域
-                if not self.current_rect:
-                    self.show_message("请先选择一个屏幕区域")
-                    return
-                
-                # 使用direct_screenshot_ocr方法处理原始截图
-                self.direct_screenshot_ocr(self.current_rect)
-                
-                # 检查OCR结果
-                if self.last_ocr_text:
-                    self.show_message(f"OCR测试成功，识别到 {len(self.last_ocr_text)} 个字符", color="green")
-                    logger.info(f"OCR测试成功，文本长度: {len(self.last_ocr_text)}")
-                else:
-                    self.show_message("OCR测试完成，但未识别到文本", color="orange")
-                    logger.warning("OCR测试未识别到文本")
-                
-                return
-            
-            # 如果没有原始截图，才使用传统方法
-            logger.warning("原始截图不可用，使用传统OCR方法")
-            
-            # 首先截取整个屏幕，保存到指定目录
-            import subprocess
-            import tempfile
-            import os
-            import datetime
-            import shutil
-            from PyQt5.QtWidgets import QMessageBox
-            
-            # 确保目标目录存在
-            target_dir = "/Users/yangyufeng/Coding/2025/Tesseract_OCR/logs"
-            os.makedirs(target_dir, exist_ok=True)
-            
-            # 创建临时文件
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-            temp_filename = temp_file.name
-            temp_file.close()
-            
-            # 生成带时间戳的目标文件名
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            target_filename = os.path.join(target_dir, f"screen_capture_{timestamp}.png")
-            
-            # 使用screencapture命令捕获整个屏幕
-            logger.info(f"开始截取整个屏幕，保存到 {target_filename}")
-            
-            result = subprocess.run([
-                'screencapture',
-                '-x',  # 无声
-                temp_filename
-            ], check=True, capture_output=True)
-            
-            # 复制临时文件到目标路径
-            if os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
-                shutil.copy2(temp_filename, target_filename)
-                logger.info(f"屏幕截图已保存到: {target_filename}")
-                
-                # 清理临时文件
-                try:
-                    os.remove(temp_filename)
-                except:
-                    pass
-            else:
-                logger.error("屏幕截图失败或文件为空")
-            
             # 检查是否有选择的区域
             if not self.current_rect:
                 self.show_message("请先选择一个屏幕区域")
                 return
+                
+            # 准备区域参数
+            rect = self.current_rect
+            logger.info(f"使用原始截图进行OCR测试: {rect.x()}, {rect.y()}, {rect.width()}, {rect.height()}")
             
-            logger.info("开始OCR测试...")
+            # 调用直接截图OCR方法
+            text, details = self.direct_screenshot_ocr(rect)
             
-            # 使用直接截图OCR方法对当前区域进行识别
-            self.direct_screenshot_ocr(self.current_rect)
-            
-            # 检查OCR结果
-            if self.last_ocr_text:
-                self.show_message(f"OCR测试成功，识别到 {len(self.last_ocr_text)} 个字符", color="green")
-                logger.info(f"OCR测试成功，文本长度: {len(self.last_ocr_text)}")
+            # 检查是否识别到文本
+            if text:
+                # 显示识别结果
+                logger.info(f"OCR测试识别到文本: {text}")
+                
+                # 更新结果区域
+                result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
+                if result_text and hasattr(result_text, 'setPlainText'):
+                    result_text.setPlainText(text)
+                
+                # 更新详情区域
+                details_text = self.ocr_tab.right_panel.findChild(QObject, "details_text")
+                if details_text and hasattr(details_text, 'setPlainText'):
+                    details_text.setPlainText(str(details))
+                
+                self.show_message("OCR测试完成，点击刷新查看最新结果")
+                
+                # 触发文本识别信号
+                self.text_recognized.emit(text, details)
             else:
-                self.show_message("OCR测试完成，但未识别到文本", color="orange")
+                self.show_message("OCR测试完成，但未识别到文本")
                 logger.warning("OCR测试未识别到文本")
-            
+                
         except Exception as e:
-            logger.error(f"OCR测试失败: {e}")
-            self.show_message(f"OCR测试失败: {str(e)}", color="red")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"OCR测试失败: {str(e)}")
+            self.show_message(f"OCR测试失败: {str(e)}", "red")
+            logger.error(f"{traceback.format_exc()}")
 
     def stop_auto_refresh(self):
         """停止自动刷新预览"""
@@ -675,6 +632,16 @@ class OCRController(QObject):
 
     def test_area_coordinates(self):
         """测试区域坐标准确性"""
+        # 导入必要的模块
+        import os
+        import cv2
+        import tempfile
+        import subprocess
+        import numpy as np
+        import traceback
+        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtGui import QImage, QPixmap
+        
         if not self.current_rect:
             QMessageBox.warning(
                 self.ocr_tab,
@@ -684,16 +651,91 @@ class OCRController(QObject):
             return
             
         try:
+            # 获取当前区域坐标
             rect = self.current_rect
             x, y, width, height = rect.x(), rect.y(), rect.width(), rect.height()
             
-            # 在屏幕上绘制一个边框以显示当前坐标
-            import tempfile
-            import subprocess
-            import os
-            import cv2
-            import numpy as np
-            from PyQt5.QtWidgets import QMessageBox
+            logger.info(f"测试区域坐标: x={x}, y={y}, width={width}, height={height}")
+            
+            # 从原始截图中获取当前区域，而不是重新截图
+            from ui.components.area_selector_mac import MacScreenCaptureSelector
+            
+            if MacScreenCaptureSelector.original_capture_path and os.path.exists(MacScreenCaptureSelector.original_capture_path):
+                # 使用原始截图
+                logger.info(f"使用原始截图: {MacScreenCaptureSelector.original_capture_path}")
+                image = cv2.imread(MacScreenCaptureSelector.original_capture_path)
+                
+                if image is not None:
+                    # 在原始图像上标记选定区域
+                    marked_image = image.copy()
+                    # 绘制红色边框
+                    cv2.rectangle(marked_image, (x, y), (x + width, y + height), (0, 0, 255), 3)
+                    
+                    # 保存标记后的图像
+                    border_filename = os.path.join(os.path.dirname(MacScreenCaptureSelector.original_capture_path), 
+                                                "test_area_marked.png")
+                    cv2.imwrite(border_filename, marked_image)
+                    
+                    # 创建QPixmap并显示
+                    pixmap = QPixmap(border_filename)
+                    self.ocr_tab.preview.set_image(pixmap)
+                    
+                    # 同时显示选定区域的放大图
+                    # 截取原始图像中的ROI
+                    try:
+                        # 确保坐标在图像范围内
+                        if (y >= 0 and y + height <= image.shape[0] and 
+                            x >= 0 and x + width <= image.shape[1]):
+                            roi = image[y:y+height, x:x+width]
+                            # 绘制边框
+                            roi_with_border = cv2.copyMakeBorder(roi, 5, 5, 5, 5, 
+                                                               cv2.BORDER_CONSTANT, value=[0, 0, 255])
+                            
+                            roi_filename = os.path.join(os.path.dirname(MacScreenCaptureSelector.original_capture_path), 
+                                                     "test_area_roi.png")
+                            cv2.imwrite(roi_filename, roi_with_border)
+                            
+                            # 显示信息
+                            QMessageBox.information(
+                                self.ocr_tab,
+                                "坐标测试",
+                                f"当前选定区域坐标:\n"
+                                f"X: {x}, Y: {y}\n"
+                                f"宽: {width}, 高: {height}\n\n"
+                                f"在预览窗口中用红色边框标出了选定区域。\n"
+                                "请确认红色边框区域是否符合您的预期。"
+                            )
+                        else:
+                            # 坐标超出图像范围
+                            logger.warning(f"选定的区域 ({x},{y},{width},{height}) 超出图像范围 ({image.shape[1]}x{image.shape[0]})")
+                            QMessageBox.warning(
+                                self.ocr_tab,
+                                "坐标测试",
+                                f"当前选定区域坐标:\n"
+                                f"X: {x}, Y: {y}\n"
+                                f"宽: {width}, 高: {height}\n\n"
+                                f"注意: 选定区域超出了原始图像范围({image.shape[1]}x{image.shape[0]})，\n"
+                                f"请重新选择合适的区域。"
+                            )
+                    except Exception as e:
+                        logger.error(f"截取ROI失败: {e}")
+                        # 显示信息
+                        QMessageBox.information(
+                            self.ocr_tab,
+                            "坐标测试",
+                            f"当前选定区域坐标:\n"
+                            f"X: {x}, Y: {y}\n"
+                            f"宽: {width}, 高: {height}\n\n"
+                            f"在预览窗口中已标记选定区域的位置。\n"
+                            f"处理截图时发生错误: {str(e)}"
+                        )
+                    
+                    return True
+                else:
+                    logger.error(f"无法读取原始截图: {MacScreenCaptureSelector.original_capture_path}")
+            
+            # 如果没有原始截图，使用传统方法
+            logger.warning("原始截图不可用，使用传统截图方法")
             
             # 创建临时文件
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
@@ -716,12 +758,11 @@ class OCRController(QObject):
                     # 在图像边缘绘制红色边框
                     h, w = image.shape[:2]
                     border_thickness = 3
-                    border_image = cv2.copyMakeBorder(image, border_thickness, border_thickness, 
-                                                      border_thickness, border_thickness, 
-                                                      cv2.BORDER_CONSTANT, value=[0, 0, 255])
+                    # 直接在图像上绘制边框，而不是添加额外边框
+                    cv2.rectangle(image, (0, 0), (w-1, h-1), (0, 0, 255), border_thickness)
                     
                     border_filename = temp_filename + "_border.png"
-                    cv2.imwrite(border_filename, border_image)
+                    cv2.imwrite(border_filename, image)
                     
                     # 创建QPixmap并显示
                     pixmap = QPixmap(border_filename)
@@ -771,329 +812,93 @@ class OCRController(QObject):
             return False
 
     def direct_screenshot_ocr(self, rect):
-        """特殊直接截图OCR方法，完全绕过现有处理流程
+        """直接截图OCR识别
         
         Args:
-            rect: 屏幕区域
+            rect: 截图区域
+            
+        Returns:
+            tuple: (识别文本, 详情)
         """
+        # 导入必要的模块
+        import os
+        import cv2
+        import numpy as np
+        import tempfile
+        import traceback
+        from PyQt5.QtCore import QRect
+        
         try:
-            # 尝试使用原始截图进行OCR识别，而不是重新捕获
+            # 优先使用原始截图
             from ui.components.area_selector_mac import MacScreenCaptureSelector
             
-            # 检查是否有原始截图可用
             if MacScreenCaptureSelector.original_capture_path and os.path.exists(MacScreenCaptureSelector.original_capture_path):
-                logger.info(f"使用原始截图进行OCR识别: {MacScreenCaptureSelector.original_capture_path}")
+                logger.info(f"使用原始截图: {MacScreenCaptureSelector.original_capture_path}")
                 
-                # 使用原始截图
-                image = cv2.imread(MacScreenCaptureSelector.original_capture_path)
+                # 读取原始截图
+                img = cv2.imread(MacScreenCaptureSelector.original_capture_path)
+                if img is None:
+                    logger.error("无法读取原始截图")
+                    return "", {}
+                    
+                # 屏幕坐标与图像坐标转换的关键修复
+                # 由于截图本身就是选择的区域，不需要裁剪，或者需要正确计算裁剪区域
+                # 获取图像尺寸
+                img_height, img_width, _ = img.shape
                 
-                if image is not None:
-                    # 更新当前截图路径
-                    self.current_screenshot = MacScreenCaptureSelector.original_capture_path
-                    
-                    # 转换为RGB格式
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                    logger.info(f"成功加载原始截图，尺寸: {image.shape}")
-                    
-                    # 使用OCR处理器识别图像
-                    text, details = self.ocr_processor.recognize_text(image)
-                    
-                    # 保存识别结果
-                    self.last_ocr_text = text
-                    self.last_ocr_details = details
-                    
-                    # 更新结果显示
-                    result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
-                    if result_text:
-                        result_text.setPlainText(text)
-                    
-                    # 触发文本识别信号
-                    logger.info(f"OCR识别成功，文本长度: {len(text)}字符")
-                    
-                    # 添加精确的区域信息到结果中
-                    details['rect'] = {
-                        'x': rect.x(),
-                        'y': rect.y(),
-                        'width': rect.width(),
-                        'height': rect.height(),
-                        'original_rect': rect
-                    }
-                    
-                    details['screenshot'] = self.current_screenshot
-                    
-                    # 创建预览图像
-                    pixmap = QPixmap(MacScreenCaptureSelector.original_capture_path)
-                    self.ocr_tab.preview.set_image(pixmap)
-                    
-                    # 触发文本识别信号
-                    self.text_recognized.emit(text, details)
-                    
-                    return
-            
-            # 如果没有原始截图，使用传统方法
-            logger.warning("原始截图不可用，使用传统截图方法")
-            
-            # 坐标校正
-            corrected_rect = self.correct_screen_coordinates(rect)
-            
-            # 获取精确的区域坐标 - 使用校正后坐标
-            x, y, width, height = corrected_rect.x(), corrected_rect.y(), corrected_rect.width(), corrected_rect.height()
-            logger.info(f"直接截图OCR: 使用校正后坐标 x={x}, y={y}, width={width}, height={height}")
-            
-            import tempfile
-            import subprocess
-            import cv2
-            import os
-            import datetime
-            import shutil
-            import platform
-            
-            # 创建临时文件
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as temp_file:
-                temp_filename = temp_file.name
-            
-            # 保存OCR区域截图到指定目录
-            target_dir = "/Users/yangyufeng/Coding/2025/Tesseract_OCR/logs"
-            os.makedirs(target_dir, exist_ok=True)
-            
-            # 生成带时间戳的目标文件名
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            target_filename = os.path.join(target_dir, f"ocr_area_{timestamp}.png")
-            debug_filename = os.path.join(target_dir, f"ocr_area_debug_{timestamp}.png")
-            
-            # ======= 关键修改：确保使用与原始选择相同的截图机制 =======
-            # 检测系统和显示器信息
-            system = platform.system()
-            
-            if system == "Darwin":  # macOS系统
-                # 方法1: 使用screencapture命令 - 与初始区域选择使用相同机制
-                try:
-                    logger.debug(f"使用macOS原生screencapture命令")
-                    
-                    # 注意：这里使用与MacScreenCaptureSelector.select_area完全相同的截图方式
-                    capture_cmd = [
-                        'screencapture',
-                        '-x',  # 无声
-                        '-R', f"{x},{y},{width},{height}",  # 区域格式：x,y,width,height
-                        temp_filename
-                    ]
-                    logger.debug(f"执行命令: {' '.join(capture_cmd)}")
-                    
-                    result = subprocess.run(capture_cmd, check=True, capture_output=True)
-                    
-                    stderr_output = result.stderr.decode('utf-8', errors='ignore') if result.stderr else ""
-                    stdout_output = result.stdout.decode('utf-8', errors='ignore') if result.stdout else ""
-                    if stderr_output:
-                        logger.warning(f"截图命令错误输出: {stderr_output}")
-                    if stdout_output:
-                        logger.debug(f"截图命令标准输出: {stdout_output}")
-                    
-                    # 保存一份截图到指定目录
-                    if os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
-                        shutil.copy2(temp_filename, target_filename)
-                        logger.info(f"OCR区域截图已保存到: {target_filename}")
-                        
-                        # 为调试目的保存一份带边框的截图
-                        try:
-                            debug_image = cv2.imread(temp_filename)
-                            if debug_image is not None:
-                                # 添加红色边框
-                                border_thickness = 5
-                                cv2.rectangle(debug_image, 
-                                             (border_thickness, border_thickness),
-                                             (debug_image.shape[1] - border_thickness, debug_image.shape[0] - border_thickness),
-                                             (0, 0, 255), border_thickness)
-                                cv2.imwrite(debug_filename, debug_image)
-                                logger.info(f"调试用带边框截图已保存到: {debug_filename}")
-                        except Exception as e:
-                            logger.warning(f"创建调试截图失败: {e}")
-                    
-                    if not os.path.exists(temp_filename) or os.path.getsize(temp_filename) == 0:
-                        raise Exception("系统截图命令未能创建有效的图像文件")
-                        
-                    # 读取图像
-                    image = cv2.imread(temp_filename)
-                    
-                    # 转换为RGB格式
-                    if image is not None:
-                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                        logger.info(f"直接截图OCR: 成功获取图像，尺寸: {image.shape}")
-                    else:
-                        # 如果读取失败，尝试方法2
-                        raise Exception("无法读取截图文件，将尝试备用方法")
-                    
-                except Exception as e:
-                    # 如果方法1失败，尝试备用方法
-                    logger.warning(f"方法1失败: {e}")
-                    
-                    # 方法2: 使用PyAutoGUI进行截图
-                    try:
-                        import pyautogui
-                        logger.info("尝试使用PyAutoGUI截图")
-                        
-                        # 截取屏幕指定区域
-                        screenshot = pyautogui.screenshot(region=(x, y, width, height))
-                        # 保存截图
-                        screenshot.save(temp_filename)
-                        
-                        # 同时保存到目标目录
-                        screenshot.save(target_filename)
-                        logger.info(f"备用方法OCR区域截图已保存到: {target_filename}")
-                        
-                        # 读取图像
-                        image = cv2.imread(temp_filename)
-                        if image is not None:
-                            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                            logger.info(f"备用方法: 成功获取图像，尺寸: {image.shape}")
-                        else:
-                            raise Exception("备用方法无法读取截图文件")
-                    except Exception as backup_error:
-                        logger.error(f"备用截图方法也失败: {backup_error}")
-                        raise Exception(f"所有截图方法都失败: {str(e)}, {str(backup_error)}")
-            else:
-                # 其他系统使用原有逻辑
-                capture_cmd = [
-                    'screencapture',
-                    '-x',  # 无声
-                    '-R', f"{x},{y},{width},{height}",  # 区域格式：x,y,width,height
-                    temp_filename
-                ]
-                logger.debug(f"执行命令: {' '.join(capture_cmd)}")
+                # 关键修复：在大多数情况下，截图本身就是选中的区域，不需要再次裁剪
+                # 但我们仍然记录一下坐标信息
+                logger.info(f"原始截图尺寸: {img_width}x{img_height}")
+                logger.info(f"请求的OCR区域: x={rect.x()}, y={rect.y()}, width={rect.width()}, height={rect.height()}")
                 
-                result = subprocess.run(capture_cmd, check=True, capture_output=True)
+                # 使用整个截图图像进行OCR
+                target_img = img
                 
-                stderr_output = result.stderr.decode('utf-8', errors='ignore') if result.stderr else ""
-                stdout_output = result.stdout.decode('utf-8', errors='ignore') if result.stdout else ""
-                if stderr_output:
-                    logger.warning(f"截图命令错误输出: {stderr_output}")
-                if stdout_output:
-                    logger.debug(f"截图命令标准输出: {stdout_output}")
+                # 应用图像预处理（如果启用）
+                if self.ocr_processor.get_config('preprocess'):
+                    target_img = self.ocr_processor.preprocess_image(target_img)
+                    
+                # 运行OCR识别
+                text, details = self.ocr_processor.run_ocr(target_img)
+                text = text.strip()
                 
-                # 保存一份截图到指定目录
-                if os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
-                    shutil.copy2(temp_filename, target_filename)
-                    logger.info(f"OCR区域截图已保存到: {target_filename}")
+                logger.info(f"OCR识别成功，文本长度: {len(text)}字符")
                 
-                if not os.path.exists(temp_filename) or os.path.getsize(temp_filename) == 0:
-                    raise Exception("系统截图命令未能创建有效的图像文件")
-                    
-                # 读取图像
-                image = cv2.imread(temp_filename)
+                # 更新预览窗口
+                pixmap = self.cv2_to_pixmap(img)
+                self.update_preview_with_image(pixmap)
                 
-                # 转换为RGB格式
-                if image is not None:
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                    logger.info(f"直接截图OCR: 成功获取图像，尺寸: {image.shape}")
-                else:
-                    raise Exception("无法读取截图文件")
-                    
-            # 检查图像尺寸是否与请求区域一致
-            high_res_image = None
-            resized_for_preview = False
-            ocr_image = image.copy()  # 默认使用原始图像进行OCR
+                return text, details
             
-            # 处理Retina显示器或高DPI情况
-            if image.shape[1] != width or image.shape[0] != height:
-                scale_factor = 0
-                if image.shape[1] == width * 2 and image.shape[0] == height * 2:
-                    scale_factor = 2
-                    logger.info(f"检测到Retina显示器(2x DPI)，自动调整图像尺寸")
-                elif image.shape[1] == width * 1.5 and image.shape[0] == height * 1.5:
-                    scale_factor = 1.5
-                    logger.info(f"检测到1.5x DPI显示器，自动调整图像尺寸")
+            # 如果没有原始截图或无效，使用屏幕截图方式
+            logger.info(f"使用屏幕截图OCR方式: {rect.x()}, {rect.y()}, {rect.width()}, {rect.height()}")
+            
+            # 捕获指定区域
+            image = self.screen_capture.capture_area(rect)
+            if image is None:
+                logger.error("屏幕捕获失败")
+                return "", {}
                 
-                if scale_factor > 0:
-                    # 保留原始高分辨率图像用于OCR识别，可以提高准确率
-                    high_res_image = image.copy()
-                    ocr_image = high_res_image  # 使用高分辨率图像进行OCR
-                    
-                    # 为UI预览创建缩放后的图像
-                    resized_image = cv2.resize(image, (width, height))
-                    logger.info(f"图像已调整为匹配请求尺寸: {resized_image.shape}")
-                    
-                    # 将调整后的图像保存到新的临时文件
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as resized_file:
-                        resized_filename = resized_file.name
-                    
-                    cv2.imwrite(resized_filename, cv2.cvtColor(resized_image, cv2.COLOR_RGB2BGR))
-                    logger.debug(f"已保存调整大小的图像到: {resized_filename}")
-                    
-                    # 标记已为预览调整大小
-                    resized_for_preview = True
-                    
-                    # 更新图像变量，供后续使用
-                    image = resized_image
-                    
-                    # 更新当前截图路径，但保留原始文件供OCR使用
-                    if not high_res_image is None:
-                        # 保留原始高分辨率图像文件
-                        pass
-                    else:
-                        # 删除原始文件
-                        if os.path.exists(temp_filename):
-                            try:
-                                os.remove(temp_filename)
-                            except:
-                                pass
-                    
-                    # 使用调整后的图像作为当前截图
-                    temp_filename = resized_filename
-                else:
-                    logger.warning(f"直接截图OCR: 图像尺寸({image.shape[1]}x{image.shape[0]})与请求区域尺寸({width}x{height})不匹配，但无法确定缩放比例")
+            # 应用图像预处理（如果启用）
+            if self.ocr_processor.get_config('preprocess'):
+                image = self.ocr_processor.preprocess_image(image)
+                
+            # 运行OCR识别
+            text, details = self.ocr_processor.run_ocr(image)
+            text = text.strip()
             
-            # 更新当前截图路径
-            if self.current_screenshot and os.path.exists(self.current_screenshot) and self.current_screenshot != temp_filename:
-                try:
-                    os.remove(self.current_screenshot)
-                except:
-                    pass
-            self.current_screenshot = temp_filename
+            logger.info(f"OCR识别成功，文本长度: {len(text)}字符")
             
-            # 创建预览图像 - 确保UI中显示的图像与选择区域尺寸一致
-            pixmap = QPixmap(temp_filename)
+            # 更新预览窗口
+            pixmap = self.cv2_to_pixmap(image)
+            self.update_preview_with_image(pixmap)
             
-            # 如果尺寸仍不匹配，强制调整为用户选择的区域尺寸
-            if pixmap.width() != width or pixmap.height() != height:
-                logger.warning(f"预览图像尺寸({pixmap.width()}x{pixmap.height()})与选定区域尺寸({width}x{height})不匹配，强制调整")
-                pixmap = pixmap.scaled(width, height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            
-            # 更新预览图像
-            self.ocr_tab.preview.set_image(pixmap)
-            logger.info(f"设置预览图像: {pixmap.width()}x{pixmap.height()}")
-            
-            # 使用OCR处理器识别图像
-            # 始终使用最高分辨率的图像进行OCR处理
-            text, details = self.ocr_processor.recognize_text(ocr_image)
-            
-            # 保存识别结果
-            self.last_ocr_text = text
-            self.last_ocr_details = details
-            
-            # 更新结果显示
-            result_text = self.ocr_tab.right_panel.findChild(QObject, "result_text")
-            if result_text:
-                result_text.setPlainText(text)
-            
-            # 添加精确的区域信息到结果中
-            details['rect'] = {
-                'x': x,
-                'y': y,
-                'width': width,
-                'height': height,
-                'original_rect': rect
-            }
-            
-            # 传递区域信息和当前截图路径
-            details['screenshot'] = self.current_screenshot
-            
-            # 触发文本识别信号
-            logger.info(f"直接截图OCR: 识别成功，文本长度: {len(text)}字符，区域: {rect}")
-            self.text_recognized.emit(text, details)
+            return text, details
             
         except Exception as e:
-            logger.error(f"直接截图OCR方法异常: {e}")
-            import traceback
+            logger.error(f"直接截图OCR方法异常: {str(e)}")
             logger.error(traceback.format_exc())
+            return "", {}
 
     def stop_monitoring(self):
         """停止监控，停止刷新定时器"""
@@ -1250,6 +1055,7 @@ class OCRController(QObject):
         y_spin = self.ocr_tab.left_panel.findChild(QObject, "y_spin")
         width_spin = self.ocr_tab.left_panel.findChild(QObject, "width_spin")
         height_spin = self.ocr_tab.left_panel.findChild(QObject, "height_spin")
+        
         
         if x_spin:
             x_spin.blockSignals(True)  # 阻止信号触发循环
