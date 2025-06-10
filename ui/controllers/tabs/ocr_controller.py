@@ -161,12 +161,6 @@ class OCRController(QObject):
         if autocorrect_check:
             autocorrect_check.stateChanged.connect(self.update_autocorrect)
         
-        # 区域坐标输入 - 已禁用，坐标输入框现在是只读的
-        # for name in ["x_spin", "y_spin", "width_spin", "height_spin"]:
-        #     spin = self.ocr_tab.left_panel.findChild(QObject, name)
-        #     if spin:
-        #         spin.valueChanged.connect(self.update_area_from_spinners)
-        
         # 文本识别器信号
         self.text_recognizer.text_recognized.connect(self.on_text_recognized)
         self.text_recognizer.error_occurred.connect(self.on_error)
@@ -832,7 +826,7 @@ class OCRController(QObject):
             # 优先使用原始截图
             from ui.components.area_selector_mac import MacScreenCaptureSelector
             
-            if MacScreenCaptureSelector.original_capture_path and os.path.exists(MacScreenCaptureSelector.original_capture_path):
+            if hasattr(MacScreenCaptureSelector, 'original_capture_path') and MacScreenCaptureSelector.original_capture_path and os.path.exists(MacScreenCaptureSelector.original_capture_path):
                 logger.info(f"使用原始截图: {MacScreenCaptureSelector.original_capture_path}")
                 
                 # 读取原始截图
@@ -841,25 +835,24 @@ class OCRController(QObject):
                     logger.error("无法读取原始截图")
                     return "", {}
                     
-                # 屏幕坐标与图像坐标转换的关键修复
-                # 由于截图本身就是选择的区域，不需要裁剪，或者需要正确计算裁剪区域
                 # 获取图像尺寸
                 img_height, img_width, _ = img.shape
                 
-                # 关键修复：在大多数情况下，截图本身就是选中的区域，不需要再次裁剪
-                # 但我们仍然记录一下坐标信息
+                # 记录信息但不裁剪图像
                 logger.info(f"原始截图尺寸: {img_width}x{img_height}")
                 logger.info(f"请求的OCR区域: x={rect.x()}, y={rect.y()}, width={rect.width()}, height={rect.height()}")
                 
-                # 使用整个截图图像进行OCR
+                # 重要修改：直接使用整个原始截图进行OCR，不进行任何裁剪
+                # 因为系统截图工具已经截取了用户选择的区域
                 target_img = img
                 
                 # 应用图像预处理（如果启用）
-                if self.ocr_processor.get_config('preprocess'):
+                config = self.ocr_processor.get_config()
+                if config.get('preprocess', False):
                     target_img = self.ocr_processor.preprocess_image(target_img)
                     
                 # 运行OCR识别
-                text, details = self.ocr_processor.run_ocr(target_img)
+                text, details = self.ocr_processor.recognize_text(target_img)
                 text = text.strip()
                 
                 logger.info(f"OCR识别成功，文本长度: {len(text)}字符")
@@ -880,11 +873,12 @@ class OCRController(QObject):
                 return "", {}
                 
             # 应用图像预处理（如果启用）
-            if self.ocr_processor.get_config('preprocess'):
+            config = self.ocr_processor.get_config()
+            if config.get('preprocess', False):
                 image = self.ocr_processor.preprocess_image(image)
                 
             # 运行OCR识别
-            text, details = self.ocr_processor.run_ocr(image)
+            text, details = self.ocr_processor.recognize_text(image)
             text = text.strip()
             
             logger.info(f"OCR识别成功，文本长度: {len(text)}字符")

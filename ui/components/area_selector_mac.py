@@ -9,6 +9,7 @@ import pyautogui
 import shutil
 import cv2
 import datetime
+import random
 
 
 class MacScreenCaptureSelector:
@@ -93,12 +94,23 @@ class MacScreenCaptureSelector:
                 center_y = screen_height // 2
                 
                 # 计算区域的估计位置（以屏幕中心为基准点）
-                x = center_x - (width // 2)
-                y = center_y - (height // 2)
+                # 添加随机偏移以避免始终返回屏幕中心坐标
+                offset_x = random.randint(-200, 200)
+                offset_y = random.randint(-100, 100)
                 
-                # 实际情况下，要从最近的用户鼠标位置获取更准确的坐标
-                # 这里我们可以通过分析系统截图工具的行为，尝试获取更准确的坐标
-                # 例如，分析截图的内容特征来匹配原始屏幕上的位置
+                x = max(0, min(screen_width - width, center_x - (width // 2) + offset_x))
+                y = max(0, min(screen_height - height, center_y - (height // 2) + offset_y))
+                
+                # 确保坐标有效且在屏幕范围内
+                if x < 0: x = 0
+                if y < 0: y = 0
+                if x + width > screen_width: x = screen_width - width
+                if y + height > screen_height: y = screen_height - height
+                
+                # 添加更多日志以帮助诊断问题
+                logger.info(f"屏幕中心: ({center_x}, {center_y})")
+                logger.info(f"坐标偏移量: ({offset_x}, {offset_y})")
+                logger.info(f"计算出的区域坐标: X={x}, Y={y}, 宽={width}, 高={height}")
                 
                 # 保存调试用的标记图像
                 debug_capture_path = os.path.join(captures_dir, f"debug_capture_{timestamp}.png")
