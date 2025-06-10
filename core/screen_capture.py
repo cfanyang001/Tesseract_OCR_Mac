@@ -46,7 +46,7 @@ class ScreenCapture:
             'cache_ttl': 0.2,        # 缓存有效期(秒)
             'throttle': True,        # 是否启用节流
             'throttle_interval': 0.1, # 节流间隔(秒)
-            'compensate_dpi': False,  # 是否补偿HiDPI显示（默认禁用，避免坐标问题）
+            'compensate_dpi': True,  # 是否补偿HiDPI显示（启用，处理坐标问题）
         }
         
         # 缓存
@@ -169,8 +169,8 @@ class ScreenCapture:
         original_width = width
         original_height = height
         
-        # 针对HiDPI显示进行坐标调整 - 默认禁用，除非明确启用
-        if self.config.get('compensate_dpi', False) and self.dpi_scale != 1.0:
+        # 针对HiDPI显示进行坐标调整
+        if self.config.get('compensate_dpi', True) and self.dpi_scale != 1.0:
             logger.info(f"应用HiDPI坐标调整，缩放因子: {self.dpi_scale}")
             # 在某些系统下，可能需要调整坐标以考虑DPI缩放
             x = int(x * self.dpi_scale)

@@ -84,6 +84,10 @@ class SmartClick(QObject):
                 screen_size = self.screen_capture.get_screen_size()
                 search_area = QRect(0, 0, screen_size.width(), screen_size.height())
             
+            # 记录原始搜索区域，用于最终坐标计算
+            original_search_area = QRect(search_area)
+            logger.info(f"原始搜索区域: {search_area.x()}, {search_area.y()}, {search_area.width()}, {search_area.height()}")
+            
             # 捕获屏幕区域
             image = self.screen_capture.capture_area(search_area)
             
@@ -91,9 +95,16 @@ class SmartClick(QObject):
             _, details = self.ocr_processor.recognize_text(image)
             
             # 查找匹配的文本框
+            best_match = None
+            best_confidence = 0
+            
             for box in details['boxes']:
                 text = box['text']
                 confidence = self._calculate_text_similarity(text, search_text)
+                
+                if confidence > best_confidence:
+                    best_confidence = confidence
+                    best_match = box
                 
                 if confidence >= self.config['text_match_threshold']:
                     # 找到匹配的文本，计算绝对位置
@@ -110,6 +121,10 @@ class SmartClick(QObject):
                     
                     logger.info(f"找到文本 '{search_text}' 位置: {text_rect}, 置信度: {confidence:.2f}")
                     return text_rect
+            
+            # 如果没有超过阈值的匹配，但有最佳匹配（置信度>0.5），记录日志但不返回
+            if best_match and best_confidence > 0.5:
+                logger.info(f"找到可能的文本匹配 '{best_match['text']}' 与 '{search_text}'，但置信度 {best_confidence:.2f} 低于阈值 {self.config['text_match_threshold']}")
             
             logger.info(f"未找到文本 '{search_text}'")
             return None
@@ -487,27 +502,52 @@ class SmartClick(QObject):
         return True
     
     def _perform_click(self, point: QPoint, click_type: str) -> None:
-        """执行点击
+        """执行点击操作
         
         Args:
             point: 点击位置
             click_type: 点击类型
         """
-        # 移动鼠标到点击位置
-        pyautogui.moveTo(point.x(), point.y(), duration=0.2)
-        
-        # 延迟
-        time.sleep(self.config['click_delay'])
-        
-        # 执行点击
-        if click_type == self.CLICK_TYPE_SINGLE:
-            pyautogui.click()
-        elif click_type == self.CLICK_TYPE_DOUBLE:
-            pyautogui.doubleClick()
-        elif click_type == self.CLICK_TYPE_RIGHT:
-            pyautogui.rightClick()
-        else:
-            raise ValueError(f"不支持的点击类型: {click_type}")
+        try:
+            # 保存原始点击点坐标
+            original_x, original_y = point.x(), point.y()
+            logger.info(f"准备点击位置: ({original_x}, {original_y}), 类型: {click_type}")
+            
+            # 高亮显示点击位置（如果启用）
+            if self.config['highlight_target']:
+                self._highlight_point(point)
+            
+            # 等待延迟
+            if self.config['click_delay'] > 0:
+                time.sleep(self.config['click_delay'])
+            
+            # 获取屏幕分辨率和缩放因子
+            try:
+                from core.screen_capture import ScreenCapture
+                screen_capture = ScreenCapture()
+                dpi_scale = screen_capture.dpi_scale
+                
+                # 如果有DPI缩放，记录日志但不自动调整（由screen_capture负责处理）
+                if dpi_scale != 1.0:
+                    logger.info(f"检测到屏幕DPI缩放因子: {dpi_scale}")
+            except:
+                logger.warning("无法检测屏幕DPI缩放因子")
+            
+            # 执行点击
+            if click_type == self.CLICK_TYPE_SINGLE:
+                logger.info(f"执行单击: ({original_x}, {original_y})")
+                pyautogui.click(original_x, original_y)
+            elif click_type == self.CLICK_TYPE_DOUBLE:
+                logger.info(f"执行双击: ({original_x}, {original_y})")
+                pyautogui.doubleClick(original_x, original_y)
+            elif click_type == self.CLICK_TYPE_RIGHT:
+                logger.info(f"执行右击: ({original_x}, {original_y})")
+                pyautogui.rightClick(original_x, original_y)
+            else:
+                logger.warning(f"未知的点击类型: {click_type}")
+                
+        except Exception as e:
+            logger.error(f"点击操作失败: {e}")
     
     def _highlight_point(self, point: QPoint) -> None:
         """高亮显示点击位置

@@ -6,10 +6,16 @@ from PyQt5.QtCore import Qt, QRect
 from PyQt5.QtGui import QPixmap
 from loguru import logger
 import pyautogui
+import shutil
+import cv2
+import datetime
 
 
 class MacScreenCaptureSelector:
     """Mac系统专用的屏幕区域选择器，使用系统原生截图工具"""
+    
+    # 添加一个类变量来保存原始截图
+    original_capture_path = None
     
     @staticmethod
     def select_area():
@@ -26,6 +32,9 @@ class MacScreenCaptureSelector:
             # 获取屏幕尺寸
             screen_width, screen_height = pyautogui.size()
             logger.info(f"屏幕尺寸: {screen_width}x{screen_height}")
+            
+            # 获取当前鼠标位置作为参考点
+            mouse_x, mouse_y = pyautogui.position()
             
             # 运行截图命令
             subprocess.run([
@@ -59,11 +68,16 @@ class MacScreenCaptureSelector:
             width = pixmap.width()
             height = pixmap.height()
             
-            # 简化的位置设置对话框
-            position_dialog = QDialog()
-            position_dialog.setWindowTitle("设置区域位置")
-            position_dialog.setMinimumWidth(400)
-            position_dialog.setMinimumHeight(300)
+            # 自动计算一个合理的起始坐标位置
+            # 策略：尝试以鼠标为中心，但确保不超出屏幕边界
+            x = max(0, min(mouse_x - width // 2, screen_width - width))
+            y = max(0, min(mouse_y - height // 2, screen_height - height))
+            
+            # 为用户显示确认对话框
+            info_dialog = QDialog()
+            info_dialog.setWindowTitle("区域选择完成")
+            info_dialog.setMinimumWidth(400)
+            info_dialog.setMinimumHeight(300)
             
             layout = QVBoxLayout()
             
@@ -85,97 +99,86 @@ class MacScreenCaptureSelector:
                 preview.setPixmap(pixmap)
             layout.addWidget(preview)
             
-            # 显示图像尺寸
-            size_info = QLabel(f"图像尺寸: {width}x{height} 像素")
-            size_info.setAlignment(Qt.AlignCenter)
-            layout.addWidget(size_info)
+            # 显示图像尺寸信息
+            size_label = QLabel(f"图像尺寸: {width}x{height} 像素")
+            size_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(size_label)
             
-            # 提示信息
-            prompt = QLabel("请选择如何设置这个区域在屏幕上的位置:")
-            prompt.setAlignment(Qt.AlignCenter)
-            layout.addWidget(prompt)
+            # 提示说明
+            hint_label = QLabel("系统将自动设置合适的区域位置，您无需手动输入坐标")
+            hint_label.setStyleSheet("color: gray; font-style: italic;")
+            hint_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(hint_label)
             
-            # 按钮布局
-            buttons = QHBoxLayout()
+            # 确认按钮
+            confirm_btn = QPushButton("确认使用此区域")
+            confirm_btn.setMinimumHeight(40)
+            layout.addWidget(confirm_btn)
             
-            center_btn = QPushButton("屏幕中央")
-            mouse_btn = QPushButton("鼠标位置")
-            manual_btn = QPushButton("手动设置")
-            
-            buttons.addWidget(center_btn)
-            buttons.addWidget(mouse_btn)
-            buttons.addWidget(manual_btn)
-            
-            layout.addLayout(buttons)
-            
-            position_dialog.setLayout(layout)
+            info_dialog.setLayout(layout)
             
             # 记录用户选择
-            position_method = {'method': 'center'}
+            confirmed = {'ok': False}
             
-            def on_center():
-                position_method['method'] = 'center'
-                position_dialog.accept()
-                
-            def on_mouse():
-                position_method['method'] = 'mouse'
-                position_dialog.accept()
-                
-            def on_manual():
-                position_method['method'] = 'manual'
-                position_dialog.accept()
-                
-            center_btn.clicked.connect(on_center)
-            mouse_btn.clicked.connect(on_mouse)
-            manual_btn.clicked.connect(on_manual)
+            def on_confirm():
+                confirmed['ok'] = True
+                info_dialog.accept()
             
-            position_dialog.exec_()
+            confirm_btn.clicked.connect(on_confirm)
             
-            # 根据用户选择计算坐标
-            if position_method['method'] == 'center':
-                # 放在屏幕中央
-                x = max(0, (screen_width - width) // 2)
-                y = max(0, (screen_height - height) // 2)
-                logger.info("使用屏幕中心策略计算坐标")
-            elif position_method['method'] == 'mouse':
-                # 使用当前鼠标位置
-                current_x, current_y = pyautogui.position()
-                x = max(0, current_x - width // 2)
-                y = max(0, current_y - height // 2)
-                logger.info("使用鼠标位置策略计算坐标")
-            else:
-                # 手动设置
-                from PyQt5.QtWidgets import QInputDialog
-                x, ok1 = QInputDialog.getInt(None, "设置X坐标", "请输入区域的X坐标:", 
-                                          screen_width // 2 - width // 2, 0, screen_width - width, 1)
-                if not ok1:
-                    x = (screen_width - width) // 2
-                
-                y, ok2 = QInputDialog.getInt(None, "设置Y坐标", "请输入区域的Y坐标:", 
-                                          screen_height // 2 - height // 2, 0, screen_height - height, 1)
-                if not ok2:
-                    y = (screen_height - height) // 2
-                
-                logger.info("使用手动设置坐标")
+            info_dialog.exec_()
             
-            # 确保坐标在屏幕范围内
-            x = min(max(0, x), screen_width - width)
-            y = min(max(0, y), screen_height - height)
+            # 如果用户取消，终止操作
+            if not confirmed['ok']:
+                try:
+                    os.remove(temp_filename)
+                except:
+                    pass
+                return None, None, None
             
             # 创建区域
             rect = QRect(x, y, width, height)
             
-            # 删除临时文件
-            try:
-                os.remove(temp_filename)
-            except Exception as e:
-                logger.warning(f"无法删除临时文件: {e}")
+            # 创建永久保存的副本，用于后续OCR操作
+            permanent_dir = os.path.join(os.getcwd(), "logs/captures")
+            os.makedirs(permanent_dir, exist_ok=True)
             
-            # 直接返回结果
-            return rect, pixmap, temp_filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            permanent_path = os.path.join(permanent_dir, f"original_capture_{timestamp}.png")
+            
+            # 复制原始截图到永久位置
+            shutil.copy2(temp_filename, permanent_path)
+            logger.info(f"原始截图已永久保存到: {permanent_path}")
+            
+            # 保存原始截图路径到类变量
+            MacScreenCaptureSelector.original_capture_path = permanent_path
+            
+            # 添加调试标记到图像
+            try:
+                # 读取截图
+                debug_image = cv2.imread(permanent_path)
+                if debug_image is not None:
+                    # 在图像上添加指示位置和内容的标记
+                    cv2.rectangle(debug_image, (0, 0), (width-1, height-1), (0, 0, 255), 2)
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    cv2.putText(debug_image, f"选定区域", (10, 30), font, 1, (0, 0, 255), 2)
+                    cv2.putText(debug_image, f"尺寸:{width}x{height}", (10, 70), font, 0.7, (0, 0, 255), 2)
+                    
+                    # 保存带标记的图像
+                    debug_path = os.path.join(permanent_dir, f"debug_capture_{timestamp}.png")
+                    cv2.imwrite(debug_path, debug_image)
+                    logger.info(f"调试用标记图像已保存到: {debug_path}")
+            except Exception as debug_error:
+                logger.warning(f"创建调试图像失败: {debug_error}")
+            
+            logger.info(f"自动设置区域位置: X={x}, Y={y}, 宽={width}, 高={height}")
+            
+            return rect, pixmap, permanent_path
             
         except Exception as e:
             logger.error(f"区域选择失败: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             try:
                 os.remove(temp_filename)
             except:

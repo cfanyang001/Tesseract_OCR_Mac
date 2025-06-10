@@ -50,27 +50,62 @@ class OCRTab(QWidget):
         x_spin = QSpinBox()
         x_spin.setRange(0, 9999)
         x_spin.setObjectName("x_spin")
+        x_spin.setReadOnly(True)  # 设为只读
+        x_spin.setButtonSymbols(QSpinBox.NoButtons)  # 隐藏上下调整按钮
+        x_spin.setStyleSheet("background-color: #f0f0f0;")  # 灰色背景提示只读
         area_info_layout.addWidget(x_spin)
         
         area_info_layout.addWidget(QLabel("Y:"))
         y_spin = QSpinBox()
         y_spin.setRange(0, 9999)
         y_spin.setObjectName("y_spin")
+        y_spin.setReadOnly(True)  # 设为只读
+        y_spin.setButtonSymbols(QSpinBox.NoButtons)  # 隐藏上下调整按钮
+        y_spin.setStyleSheet("background-color: #f0f0f0;")  # 灰色背景提示只读
         area_info_layout.addWidget(y_spin)
         
         area_info_layout.addWidget(QLabel("宽:"))
         width_spin = QSpinBox()
         width_spin.setRange(1, 9999)
         width_spin.setObjectName("width_spin")
+        width_spin.setReadOnly(True)  # 设为只读
+        width_spin.setButtonSymbols(QSpinBox.NoButtons)  # 隐藏上下调整按钮
+        width_spin.setStyleSheet("background-color: #f0f0f0;")  # 灰色背景提示只读
         area_info_layout.addWidget(width_spin)
         
         area_info_layout.addWidget(QLabel("高:"))
         height_spin = QSpinBox()
         height_spin.setRange(1, 9999)
         height_spin.setObjectName("height_spin")
+        height_spin.setReadOnly(True)  # 设为只读
+        height_spin.setButtonSymbols(QSpinBox.NoButtons)  # 隐藏上下调整按钮
+        height_spin.setStyleSheet("background-color: #f0f0f0;")  # 灰色背景提示只读
         area_info_layout.addWidget(height_spin)
         
         area_layout.addWidget(area_info_frame)
+        
+        # 添加坐标自动计算提示
+        coords_info_label = QLabel("坐标将自动计算，无需手动设置")
+        coords_info_label.setStyleSheet("color: gray; font-style: italic;")
+        coords_info_label.setAlignment(Qt.AlignCenter)
+        area_layout.addWidget(coords_info_label)
+        
+        # 添加区域测试按钮
+        test_area_frame = QFrame()
+        test_area_layout = QHBoxLayout(test_area_frame)
+        
+        # 坐标测试按钮
+        test_area_btn = QPushButton("测试区域坐标")
+        test_area_btn.setObjectName("test_area_btn")
+        test_area_layout.addWidget(test_area_btn)
+        
+        # 全屏测试按钮
+        test_fullscreen_btn = QPushButton("测试全屏截图")
+        test_fullscreen_btn.setObjectName("test_fullscreen_btn")
+        test_area_layout.addWidget(test_fullscreen_btn)
+        
+        area_layout.addWidget(test_area_frame)
+        
         layout.addWidget(area_group)
         
         # OCR设置组
